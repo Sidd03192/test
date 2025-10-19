@@ -4,7 +4,7 @@ import os
 
 # --- CONFIGURATION ---
 YEAR = 2023
-GRAND_PRIX = 'Silverstone'
+GRAND_PRIX = 'Monaco'
 SESSION = 'R'
 TELEMETRY_OUTPUT_FILE = 'race_data_timeseries.csv'
 WEATHER_OUTPUT_FILE = 'weather_data.csv'
