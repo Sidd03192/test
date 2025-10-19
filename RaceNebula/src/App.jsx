@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
@@ -18,9 +18,7 @@ import {
   TrendingUp,
   Target,
   Users,
-  Clock,
-  AlertTriangle,
-  CheckCircle2,
+  Thermometer,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 
@@ -50,35 +48,26 @@ const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
       compoundEffect.speed +
       fuelDiff * 0.4 -
       Math.abs(pressureDiff) * 1.5,
-    RPM:
-      (driverData.RPM || 0) +
-      (compoundEffect.speed + fuelDiff * 0.2) * 20,
+    RPM: (driverData.RPM || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 20,
     Throttle: Math.max(
-      0,
-      Math.min(
-        100,
-        (driverData.Throttle || 0) + fuelDiff * 0.3
-      )
-    ),
+      0,
+      Math.min(100, (driverData.Throttle || 0) + fuelDiff * 0.3)
+    ),
     TyreLife:
       (driverData.TyreLife || 0) +
       compoundEffect.wear -
       Math.abs(pressureDiff) * 1.0,
-    X:
-      (driverData.X || 0) +
-      (compoundEffect.speed + fuelDiff * 0.2) * 0.15,
-    Y:
-      (driverData.Y || 0) +
-      (compoundEffect.speed + fuelDiff * 0.2) * 0.09,
+    X: (driverData.X || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 0.15,
+    Y: (driverData.Y || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 0.09,
   };
 
   // --- Apply deltas to weather values (tiny effects) ---
   const adjustedWeather = {
-    AirTemp: 0, // Set to 0 or base value if you remove the separate API call
-    TrackTemp: 0, // Set to 0 or base value
-    WindSpeed: 0,
-    Rainfall: weather?.Rainfall || false,
-  };
+    AirTemp: 0, // Set to 0 or base value if you remove the separate API call
+    TrackTemp: 0, // Set to 0 or base value
+    WindSpeed: 0,
+    Rainfall: weather?.Rainfall || false,
+  };
 
   return { telemetry: adjustedTelemetry, weather: adjustedWeather };
 };
@@ -88,12 +77,14 @@ const App = () => {
   const [sessionTime, setSessionTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-
+  const [engineHeat, setEngineHeat] = useState(85.0); // Temperature in Celsius
   // Driver selection
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [selectedDriver, setSelectedDriver] = useState("");
   const [allDriversData, setAllDriversData] = useState([]);
-
+  const [tireWear, setTireWear] = useState(100.0); // Tire wear as a percentage
+  const [alerts, setAlerts] = useState([]); // An array to hold active alerts
+  const prevSessionTimeRef = useRef(sessionTime); // To calculate time delta
   const [raceState, setRaceState] = useState({
     lap: 0,
     totalLaps: 58,
@@ -151,7 +142,6 @@ const App = () => {
   const [simulationActive, setSimulationActive] = useState(false);
   const [pitLap, setPitLap] = useState([30]);
   const [engineMode, setEngineMode] = useState(1); // 0=ECO, 1=NORMAL, 2=POWER
-  const [simulationSummary, setSimulationSummary] = useState(null);
 
   // Fetch race data from backend
   const fetchRaceData = async (time) => {
@@ -298,8 +288,77 @@ const App = () => {
     }
   }, [sessionTime]);
 
+  // ... after the useEffect that refetches when the driver changes
+
+  // === CONSOLIDATED HOOK FOR REAL-TIME CALCULATIONS ===
+  useEffect(() => {
+    const deltaTime = sessionTime - prevSessionTimeRef.current;
+    prevSessionTimeRef.current = sessionTime;
+
+    if (isPlaying && deltaTime > 0) {
+      // --- 1. Tire Wear Logic ---
+      const baseWearRate = 0.05;
+      const compoundModifiers = { SOFT: 1.6, MEDIUM: 1.0, HARD: 0.7 };
+      const currentCompound = ["SOFT", "MEDIUM", "HARD"][tireCompound];
+      const compoundModifier = compoundModifiers[currentCompound] || 1.0;
+      const fuelModifier = 1 + (fuelLoad[0] / 110) * 0.4;
+      const wearAmount =
+        deltaTime * baseWearRate * compoundModifier * fuelModifier;
+      setTireWear((prevWear) => Math.max(0, prevWear - wearAmount));
+
+      // --- 2. Engine Heat Logic ---
+      const heatRates = {
+        0: -0.8, // ECO: cools down
+        1: 1.2, // NORMAL: cools slightly (Corrected from 1.2)
+        2: 1.5, // POWER: heats up quickly
+      };
+      const heatRate = heatRates[engineMode] || -0.2;
+      const heatChange = deltaTime * heatRate;
+      setEngineHeat((prevHeat) =>
+        Math.max(70, Math.min(130, prevHeat + heatChange))
+      );
+    }
+    // This single hook depends on all relevant variables
+  }, [sessionTime, isPlaying, tireCompound, fuelLoad, engineMode]);
+
+  // ... after the tire wear calculation useEffect
+
+  // === NEW: USEEFFECT FOR MANAGING ALERTS ===
+  useEffect(() => {
+    const activeAlerts = [];
+
+    // Check for critical tire wear
+    if (tireWear <= 20) {
+      activeAlerts.push({
+        id: "tire_wear_critical",
+        variant: "destructive",
+        title: "⚠️ Critical Tire Wear!",
+        description: `Tire integrity is at ${tireWear.toFixed(
+          1
+        )}%. Pit immediately to avoid failure!`,
+      });
+    }
+    // Check for a warning
+    else if (tireWear <= 40) {
+      activeAlerts.push({
+        id: "tire_wear_warning",
+        variant: "default", // This variant has a blue border in shadcn/ui
+        title: "Low Tire Wear Warning",
+        description: `Tire life is at ${tireWear.toFixed(
+          1
+        )}%. Consider a pit stop soon.`,
+      });
+    }
+
+    // You could add other alerts here in the future (e.g., low fuel)
+
+    setAlerts(activeAlerts);
+  }, [tireWear]); // This effect runs only when tireWear changes
   // Fetch track outline and driver info when driver changes
   // Refetch when driver changes
+
+  // Find your existing "TIRE WEAR CALCULATION" useEffect and add to it
+
   useEffect(() => {
     if (selectedDriver) {
       fetchTrackOutline(selectedDriver);
@@ -406,12 +465,20 @@ const App = () => {
       if (data.error) {
         setPrediction(`Simulation error: ${data.error}`);
         setGhostCar(null);
-        setSimulationSummary(null);
       } else {
         setGhostCar(data.simulated_laps);
-        setSimulationSummary(data.summary);
         setShowGhost(true);
-        setPrediction(null); // Clear old text prediction, we'll show rich summary instead
+
+        // Set prediction summary
+        const finalLap = data.simulated_laps[data.simulated_laps.length - 1];
+        const positionChange = finalLap.position - raceState.position;
+        setPrediction(
+          `Digital Twin completed! Final position: P${finalLap.position} (${
+            positionChange > 0 ? "+" : ""
+          }${positionChange}). Total time: ${(
+            finalLap.cumulative_time / 60
+          ).toFixed(2)} min.`
+        );
       }
       setSimulationActive(false);
     } catch (err) {
@@ -421,9 +488,59 @@ const App = () => {
     }
   };
 
+  // Find your existing "MANAGING ALERTS" useEffect and add to it
+
+  useEffect(() => {
+    const activeAlerts = [];
+
+    // --- Tire Wear Alerts (existing) ---
+    if (tireWear <= 20) {
+      activeAlerts.push({
+        id: "tire_wear_critical",
+        variant: "destructive",
+        title: "⚠️ Critical Tire Wear!",
+        description: `Tire integrity is at ${tireWear.toFixed(
+          1
+        )}%. Pit immediately!`,
+      });
+    } else if (tireWear <= 40) {
+      activeAlerts.push({
+        id: "tire_wear_warning",
+        variant: "default",
+        title: "Low Tire Wear Warning",
+        description: `Tire life is at ${tireWear.toFixed(
+          1
+        )}%. Consider a pit stop soon.`,
+      });
+    }
+
+    // === NEW: ENGINE HEAT ALERTS ===
+    if (engineHeat >= 115) {
+      activeAlerts.push({
+        id: "engine_heat_critical",
+        variant: "destructive",
+        title: "🔥 ENGINE OVERHEATING!",
+        description: `Temperature at ${engineHeat.toFixed(
+          1
+        )}°C. Switch to ECO mode or risk engine damage!`,
+      });
+    } else if (engineHeat >= 105) {
+      activeAlerts.push({
+        id: "engine_heat_warning",
+        variant: "default",
+        title: "High Engine Temperature",
+        description: `Temperature at ${engineHeat.toFixed(
+          1
+        )}°C. Consider using a lower engine mode to cool down.`,
+      });
+    }
+    // === END OF NEW ALERTS ===
+
+    setAlerts(activeAlerts);
+  }, [tireWear, engineHeat]); // <-- Add engineHeat to dependencies
+
   // === Normalize, render, and UI unchanged ===
   // (the rest of your render code below stays identical)
-
 
   // Normalize X,Y coordinates using unified bounds for track and drivers
   const normalizeWithUnifiedBounds = (drivers, trackOutline) => {
@@ -737,14 +854,26 @@ const App = () => {
 
               {/* Alerts */}
 
+              {/* In the Race State & Weather Card, find the "Alerts" section */}
+
+              {/* === REPLACE YOUR STATIC ALERT WITH THIS DYNAMIC BLOCK === */}
               <div className="space-y-3 min-w-[500px] align-center h-full justify-center ">
-                <Alert variant="destructive">
-                  <AlertTitle>Heads up!</AlertTitle>
-                  <AlertDescription>
-                    This is how the alert gonna be lookin gang
-                  </AlertDescription>
-                </Alert>
+                {alerts.length > 0 ? (
+                  alerts.map((alert) => (
+                    <Alert key={alert.id} variant={alert.variant}>
+                      <AlertTitle>{alert.title}</AlertTitle>
+                      <AlertDescription>{alert.description}</AlertDescription>
+                    </Alert>
+                  ))
+                ) : (
+                  <div className="flex items-center justify-center h-full bg-secondary/30 rounded-lg p-4">
+                    <p className="text-sm text-muted-foreground">
+                      ✅ No active alerts
+                    </p>
+                  </div>
+                )}
               </div>
+              {/* === END OF REPLACEMENT === */}
               {/* Weather */}
               <div className="space-y-3 ">
                 <div className="flex items-center gap-2">
@@ -815,7 +944,7 @@ const App = () => {
         </Card>
 
         {/* Telemetry Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {/* RPM */}
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
@@ -856,15 +985,53 @@ const App = () => {
           </Card>
 
           {/* Gear */}
+          {/* Tires Card */}
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
+                {/* ... The existing content (Tires title, tire color circle, compound badge) remains the same ... */}
                 <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
-                  Gear
+                  Tires
                 </div>
-                <div className="text-5xl font-bold text-primary text-center">
-                  {telemetry.nGear}
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`h-8 w-8 rounded-full ${getTireColor(
+                      telemetry.Compound
+                    )}`}
+                  ></div>
+                  <Badge
+                    variant="secondary"
+                    className="text-sm px-3 py-1 font-bold"
+                  >
+                    {telemetry.Compound}
+                  </Badge>
                 </div>
+                <div className="text-xs text-muted-foreground">
+                  Life: {telemetry.TyreLife?.toFixed(0)} laps
+                </div>
+
+                {/* === ADD THIS NEW SECTION FOR TIRE WEAR === */}
+                <div className="pt-2">
+                  <div className="text-xs text-muted-foreground font-semibold flex justify-between items-center">
+                    <span>WEAR</span>
+                    <span className="text-primary font-bold text-base">
+                      {tireWear.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="h-2 bg-secondary rounded-full overflow-hidden mt-1">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        tireWear <= 20
+                          ? "bg-destructive"
+                          : tireWear <= 40
+                          ? "bg-yellow-500"
+                          : "bg-green-500"
+                      }`}
+                      style={{ width: `${tireWear}%` }}
+                    />
+                  </div>
+                </div>
+                {/* === END OF NEW SECTION === */}
               </div>
             </CardContent>
           </Card>
@@ -913,45 +1080,26 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
-                  DRS
+                <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  <Thermometer className="h-4 w-4" />
+                  <span>Engine Heat</span>
                 </div>
-                <div className="flex items-center justify-center h-16">
-                  <Badge
-                    variant={telemetry.DRS > 0 ? "default" : "secondary"}
-                    className={`text-xl px-6 py-3 font-bold ${
-                      telemetry.DRS > 0 ? "bg-primary animate-pulse" : ""
-                    }`}
-                  >
-                    {telemetry.DRS > 0 ? "OPEN" : "CLOSED"}
-                  </Badge>
+                <div className="text-3xl font-bold text-primary">
+                  {engineHeat.toFixed(1)}°C
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Tires */}
-          <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
-            <CardContent className="p-4">
-              <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
-                  Tires
-                </div>
-                <div className="flex items-center gap-2">
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className={`h-8 w-8 rounded-full ${getTireColor(
-                      telemetry.Compound
-                    )}`}
-                  ></div>
-                  <Badge
-                    variant="secondary"
-                    className="text-sm px-3 py-1 font-bold"
-                  >
-                    {telemetry.Compound}
-                  </Badge>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Life: {telemetry.TyreLife?.toFixed(0)} laps
+                    className={`h-full transition-all duration-300 ${
+                      engineHeat >= 115
+                        ? "bg-destructive"
+                        : engineHeat >= 105
+                        ? "bg-yellow-500"
+                        : "bg-blue-500"
+                    }`}
+                    style={{
+                      width: `${((engineHeat - 70) / (130 - 70)) * 100}%`,
+                    }}
+                  />
                 </div>
               </div>
             </CardContent>
@@ -1039,67 +1187,54 @@ const App = () => {
                 ))}
 
                 {/* Ghost Car Visualization */}
-                {showGhost && ghostCar && (() => {
-                  const currentLap = raceState.lap;
-                  const ghostLapData = ghostCar.find(l => l.lap === currentLap);
+                {showGhost &&
+                  ghostCar &&
+                  (() => {
+                    const currentLap = raceState.lap;
+                    const ghostLapData = ghostCar.find(
+                      (l) => l.lap === currentLap
+                    );
 
-                  if (!ghostLapData || !ghostLapData.ghost_x || !ghostLapData.ghost_y) return null;
+                    if (!ghostLapData) return null;
 
-                  // Find actual driver position for reference
-                  const actualDriver = normalizedDrivers.find(d => d.name === selectedDriver);
-                  if (!actualDriver) return null;
+                    // Find actual driver position for reference
+                    const actualDriver = normalizedDrivers.find(
+                      (d) => d.name === selectedDriver
+                    );
+                    if (!actualDriver) return null;
 
-                  // Calculate if ghost is ahead or behind based on cumulative session time
-                  const actualCumulativeTime = raceState.sessionTime;
-                  const ghostCumulativeTime = ghostLapData.cumulative_session_time;
-                  const timeDelta = ghostCumulativeTime - actualCumulativeTime;
-                  const isAhead = timeDelta < 0;
-
-                  // Normalize ghost car X,Y coordinates using the same bounds as other drivers
-                  const allXValues = trackOutline.map(p => p.x).concat(drivers.map(d => d.x));
-                  const allYValues = trackOutline.map(p => p.y).concat(drivers.map(d => d.y));
-                  const minX = Math.min(...allXValues);
-                  const maxX = Math.max(...allXValues);
-                  const minY = Math.min(...allYValues);
-                  const maxY = Math.max(...allYValues);
-
-                  const normalizedGhostX = ((ghostLapData.ghost_x - minX) / (maxX - minX)) * 80 + 10;
-                  const normalizedGhostY = ((ghostLapData.ghost_y - minY) / (maxY - minY)) * 80 + 10;
-
-                  return (
-                    <div
-                      className="absolute transition-all duration-1000 ease-linear"
-                      style={{
-                        left: `${normalizedGhostX}%`,
-                        top: `${normalizedGhostY}%`,
-                        transform: "translate(-50%, -50%)",
-                      }}
-                    >
-                      <div className="relative z-20">
-                        <div className={`w-10 h-10 rounded-full border-3 border-dashed ${isAhead ? 'border-green-500 bg-green-500/30' : 'border-red-500 bg-red-500/30'} flex items-center justify-center text-sm font-bold shadow-lg`}>
-                          {ghostLapData.position}
-                        </div>
-                        <div className={`absolute inset-0 ${isAhead ? 'bg-green-500' : 'bg-red-500'} rounded-full animate-ping opacity-10`}></div>
-                        {/* Ghost tooltip */}
-                        <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 ${isAhead ? 'bg-green-900/90 border-green-500' : 'bg-red-900/90 border-red-500'} border-2 rounded-lg text-xs whitespace-nowrap shadow-xl z-30`}>
-                          <div className={`font-bold ${isAhead ? 'text-green-300' : 'text-red-300'}`}>
-                            GHOST CAR {isAhead ? '(AHEAD)' : '(BEHIND)'}
+                    // Offset ghost car slightly for visibility
+                    return (
+                      <div
+                        className="absolute transition-all duration-500"
+                        style={{
+                          left: `${actualDriver.normalizedX + 3}%`,
+                          top: `${actualDriver.normalizedY + 3}%`,
+                          transform: "translate(-50%, -50%)",
+                        }}
+                      >
+                        <div className="relative z-20">
+                          <div className="w-10 h-10 rounded-full border-3 border-dashed border-purple-500 bg-purple-500/30 flex items-center justify-center text-sm font-bold shadow-lg">
+                            {ghostLapData.position}
                           </div>
-                          <div className={isAhead ? 'text-green-200' : 'text-red-200'}>P{ghostLapData.position}</div>
-                          <div className={`${isAhead ? 'text-green-400' : 'text-red-400'} text-[10px]`}>
-                            {ghostLapData.compound} ({ghostLapData.tyre_life} laps)
-                          </div>
-                          <div className="text-white text-[10px] font-bold mt-1">
-                            {isAhead ? '-' : '+'}{Math.abs(timeDelta).toFixed(1)}s
-                          </div>
-                          <div className="text-purple-300 text-[10px] mt-1">
-                            Engine: {ghostLapData.engine_temp}°C | Fuel: {ghostLapData.fuel_remaining}kg
+                          <div className="absolute inset-0 bg-purple-500 rounded-full animate-ping opacity-10"></div>
+                          {/* Ghost tooltip */}
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 bg-purple-900/90 border-2 border-purple-500 rounded-lg text-xs whitespace-nowrap shadow-xl">
+                            <div className="font-bold text-purple-300">
+                              GHOST CAR
+                            </div>
+                            <div className="text-purple-200">
+                              P{ghostLapData.position}
+                            </div>
+                            <div className="text-purple-400 text-[10px]">
+                              {ghostLapData.compound} ({ghostLapData.tyre_life}{" "}
+                              laps)
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    );
+                  })()}
 
                 {/* Legend */}
                 <div className="absolute top-4 right-4 bg-card/90 backdrop-blur border border-border rounded-lg p-3 space-y-1">
@@ -1123,16 +1258,12 @@ const App = () => {
                     <span className="text-xs font-bold">Selected</span>
                   </div>
                   {showGhost && (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full border-2 border-dashed border-green-500 bg-green-500/30"></div>
-                        <span className="text-xs font-bold text-green-400">Ghost (Ahead)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full border-2 border-dashed border-red-500 bg-red-500/30"></div>
-                        <span className="text-xs font-bold text-red-400">Ghost (Behind)</span>
-                      </div>
-                    </>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full border-2 border-dashed border-purple-500 bg-purple-500/30"></div>
+                      <span className="text-xs font-bold text-purple-400">
+                        Ghost
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1153,8 +1284,12 @@ const App = () => {
                   Pit Stop Lap
                 </label>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-muted-foreground">Lap {pitLap[0]}</span>
-                  <span className="text-xs text-muted-foreground">Current: {raceState.lap}</span>
+                  <span className="text-xs text-muted-foreground">
+                    Lap {pitLap[0]}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Current: {raceState.lap}
+                  </span>
                 </div>
                 <Slider
                   value={pitLap}
@@ -1264,126 +1399,6 @@ const App = () => {
                 )}
               </Button>
 
-              {/* Simulation Summary */}
-              {simulationSummary && (
-                <div className="space-y-3 p-4 bg-gradient-to-br from-purple-900/20 to-pink-900/20 rounded-lg border-2 border-purple-500/50 shadow-lg animate-in slide-in-from-bottom">
-                  <h4 className="text-sm font-semibold text-purple-300 mb-3 flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4" />
-                    Simulation Results
-                  </h4>
-
-                  {/* Time Comparison */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-secondary/50 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Clock className="h-4 w-4 text-blue-400" />
-                        <span className="text-xs text-muted-foreground">Real Time</span>
-                      </div>
-                      <div className="text-lg font-bold text-blue-400">
-                        {(simulationSummary.actual_time / 60).toFixed(2)} min
-                      </div>
-                    </div>
-                    <div className="bg-secondary/50 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Clock className="h-4 w-4 text-purple-400" />
-                        <span className="text-xs text-muted-foreground">Ghost Time</span>
-                      </div>
-                      <div className="text-lg font-bold text-purple-400">
-                        {(simulationSummary.final_time / 60).toFixed(2)} min
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Time Delta */}
-                  <div className={`p-3 rounded-lg ${simulationSummary.time_delta < 0 ? 'bg-green-900/30 border border-green-500/50' : 'bg-red-900/30 border border-red-500/50'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Time Delta</span>
-                      <span className={`text-xl font-bold ${simulationSummary.time_delta < 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {simulationSummary.time_delta < 0 ? '-' : '+'}{Math.abs(simulationSummary.time_delta).toFixed(2)}s
-                      </span>
-                    </div>
-                    <div className="text-xs mt-1 text-muted-foreground">
-                      {simulationSummary.time_delta < 0 ? 'Faster than actual' : 'Slower than actual'}
-                    </div>
-                  </div>
-
-                  {/* Position */}
-                  <div className="bg-secondary/50 rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">Final Position</span>
-                      <span className="text-2xl font-bold text-accent">
-                        P{simulationSummary.final_position}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Pit Stops */}
-                  {simulationSummary.pit_stops && simulationSummary.pit_stops.length > 0 && (
-                    <div className="bg-secondary/50 rounded-lg p-3">
-                      <div className="text-xs text-muted-foreground mb-2">Pit Stops</div>
-                      {simulationSummary.pit_stops.map((pit, idx) => (
-                        <div key={idx} className="text-xs text-primary">
-                          Lap {pit.lap}: {pit.reason} ({pit.compound})
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Warnings */}
-                  {simulationSummary.warnings && simulationSummary.warnings.length > 0 && (
-                    <div className="space-y-2">
-                      {simulationSummary.warnings.map((warning, idx) => (
-                        <div key={idx} className="flex items-center gap-2 p-2 bg-red-900/30 border border-red-500/50 rounded-lg">
-                          <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                          <span className="text-xs text-red-200">{warning}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Recommendations */}
-                  {simulationSummary.recommendations && simulationSummary.recommendations.length > 0 && (
-                    <div className="space-y-2">
-                      {simulationSummary.recommendations.map((rec, idx) => (
-                        <div key={idx} className={`flex items-center gap-2 p-2 rounded-lg ${
-                          rec.urgency === 'critical'
-                            ? 'bg-orange-900/30 border border-orange-500/50'
-                            : 'bg-yellow-900/30 border border-yellow-500/50'
-                        }`}>
-                          <AlertTriangle className={`h-4 w-4 flex-shrink-0 ${
-                            rec.urgency === 'critical' ? 'text-orange-400' : 'text-yellow-400'
-                          }`} />
-                          <div className="flex-1">
-                            <span className={`text-xs ${
-                              rec.urgency === 'critical' ? 'text-orange-200' : 'text-yellow-200'
-                            }`}>
-                              {rec.reason}
-                            </span>
-                            {rec.recommended_compound && (
-                              <div className="text-[10px] text-muted-foreground mt-1">
-                                Recommended: {rec.recommended_compound} tires
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Success indicator - only show if no warnings or critical recommendations */}
-                  {(!simulationSummary.warnings || simulationSummary.warnings.length === 0) &&
-                   (!simulationSummary.recommendations || simulationSummary.recommendations.filter(r => r.urgency === 'critical').length === 0) && (
-                    <div className="flex items-center gap-2 p-2 bg-green-900/30 border border-green-500/50 rounded-lg">
-                      <CheckCircle2 className="h-4 w-4 text-green-400" />
-                      <span className="text-xs text-green-200">
-                        Strategy viable! Tire health: {simulationSummary.tire_health}%, Fuel: {simulationSummary.fuel_remaining}kg, Engine: {simulationSummary.engine_temp_final}°C
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Error message fallback */}
               {prediction && (
                 <div className="p-4 bg-gradient-to-r from-secondary/50 to-accent/10 rounded-lg border-2 border-accent/50 shadow-lg animate-in slide-in-from-bottom">
                   <h4 className="text-sm font-semibold text-accent mb-2 flex items-center gap-2">

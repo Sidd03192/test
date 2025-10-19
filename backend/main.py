@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import os
-import numpy as np # Import numpy to handle NaN values explicitly
+import numpy as np
 
 # --- INITIALIZATION ---
 app = Flask(__name__)
@@ -76,10 +76,7 @@ def get_race_state_by_time():
     except ValueError:
         return jsonify({"error": "Invalid 'time' parameter. Must be a number."}), 400
 
-    # --- NEW, CORRECTED LOGIC ---
-    # Find the closest data point for EACH driver independently to create a true snapshot.
     result_list = []
-    # Get a list of unique drivers present in the dataset
     unique_drivers = TELEMETRY_DF['Driver'].dropna().unique()
 
     # Get all drivers data for this time
@@ -166,15 +163,12 @@ def get_weather_by_time():
     # Find the closest weather data point in time
     weather_point = WEATHER_DF.iloc[(WEATHER_DF['SessionTime'] - session_time).abs().argsort()[0]]
     
-    # --- MORE ROBUST FIX: Explicitly replace np.nan with None ---
     cleaned_data = weather_point.replace({np.nan: None})
     result = cleaned_data.to_dict()
     return jsonify(result)
 
-# This is a simplified prediction model for the hackathon
 @app.route('/api/predict_scenario', methods=['POST'])
 def predict_scenario():
-    # ... (prediction logic remains the same)
     scenario = request.json
     modifications = scenario.get('modifications')
     tire_gain = -1.2 if modifications.get('next_compound') == 'SOFT' else 0.5
@@ -183,20 +177,38 @@ def predict_scenario():
     total_time_impact = (tire_gain * 15) + pit_time_impact
     return jsonify({"scenario": {"predicted_time_gain": total_time_impact, "notes": f"Pitting on lap {modifications.get('pit_lap')} for {modifications.get('next_compound')}s is predicted to be {abs(total_time_impact):.2f}s {'faster' if total_time_impact < 0 else 'slower'}."}})
 
+# --- NEW ENDPOINT FOR POSITION INTERPOLATION ---
+@app.route('/api/interpolate_position', methods=['GET'])
+def interpolate_position_endpoint():
+    """
+    Returns interpolated X, Y position for a driver at a specific session time.
+    """
+    if TELEMETRY_DF is None or TELEMETRY_DF.empty:
+        return jsonify({"error": "Telemetry data not loaded."}), 500
+
+    driver = request.args.get('driver', 'VER')
+    try:
+        session_time = float(request.args.get('time', 0))
+    except ValueError:
+        return jsonify({"error": "Invalid 'time' parameter. Must be a number."}), 400
+
+    pos = interpolate_track_position(session_time, driver)
+    return jsonify(pos)
+
 # --- DIGITAL TWIN SIMULATION ---
 
 # Realistic tire performance model with degradation cliffs
 TIRE_DEGRADATION_MODEL = {
     "SOFT": {
-        "base_performance": -0.4,  # 0.4s faster per lap initially
-        "degradation_per_lap": 0.02,  # Gradual wear
-        "cliff_point": 15,  # Performance cliff after 15 laps
-        "cliff_penalty": 0.3,  # Additional 0.3s/lap after cliff
+        "base_performance": -0.4,
+        "degradation_per_lap": 0.02,
+        "cliff_point": 15,
+        "cliff_penalty": 0.3,
         "optimal_life": 12,
-        "wear_multiplier": 1.0  # Base wear rate
+        "wear_multiplier": 1.0
     },
     "MEDIUM": {
-        "base_performance": 0.0,  # Baseline compound
+        "base_performance": 0.0,
         "degradation_per_lap": 0.015,
         "cliff_point": 25,
         "cliff_penalty": 0.25,
@@ -204,7 +216,7 @@ TIRE_DEGRADATION_MODEL = {
         "wear_multiplier": 1.0
     },
     "HARD": {
-        "base_performance": 0.3,  # 0.3s slower per lap initially
+        "base_performance": 0.3,
         "degradation_per_lap": 0.01,
         "cliff_point": 35,
         "cliff_penalty": 0.2,
@@ -216,30 +228,28 @@ TIRE_DEGRADATION_MODEL = {
 # Engine mode model with heating effects
 ENGINE_MODES = {
     "ECO": {
-        "performance_delta": 0.15,  # 0.15s slower per lap
-        "heating_rate": -1.0,  # Cooling effect (-1°C per lap)
-        "fuel_efficiency": 0.85  # 15% less fuel consumption
+        "performance_delta": 0.15,
+        "heating_rate": -1.0,
+        "fuel_efficiency": 0.85
     },
     "NORMAL": {
-        "performance_delta": 0.0,  # Baseline
-        "heating_rate": 0.0,  # Neutral
-        "fuel_efficiency": 1.0  # Normal consumption
+        "performance_delta": 0.0,
+        "heating_rate": 0.0,
+        "fuel_efficiency": 1.0
     },
     "POWER": {
-        "performance_delta": -0.2,  # 0.2s faster per lap
-        "heating_rate": 2.0,  # Generates heat (+2°C per lap)
-        "fuel_efficiency": 1.25  # 25% more fuel consumption
+        "performance_delta": -0.2,
+        "heating_rate": 2.0,
+        "fuel_efficiency": 1.25
     }
 }
 
 def create_driver_baseline(driver, start_lap):
     """
     Create performance baseline for driver based on actual race data.
-    Returns average lap time, tire degradation rate, fuel consumption, etc.
     """
     driver_data = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].copy()
 
-    # Get laps around the start lap to establish baseline
     baseline_window = driver_data[
         (driver_data['LapNumber'] >= max(1, start_lap - 3)) &
         (driver_data['LapNumber'] <= start_lap + 3)
@@ -252,21 +262,20 @@ def create_driver_baseline(driver, start_lap):
             "tire_deg_rate": 1.0
         }
 
-    # Calculate average lap time for this stint
     lap_times = []
     for lap in baseline_window['LapNumber'].unique():
         lap_data = baseline_window[baseline_window['LapNumber'] == lap]
         if not lap_data.empty:
             lap_time = lap_data['SessionTime'].max() - lap_data['SessionTime'].min()
-            if lap_time > 0 and lap_time < 200:  # Filter out invalid lap times
+            if lap_time > 0 and lap_time < 200:
                 lap_times.append(lap_time)
 
     avg_lap_time = sum(lap_times) / len(lap_times) if lap_times else 90.0
 
     return {
         "avg_lap_time": float(avg_lap_time),
-        "fuel_consumption_rate": 1.5,  # kg per lap (standard F1)
-        "tire_deg_rate": 1.0  # Baseline multiplier
+        "fuel_consumption_rate": 1.5,
+        "tire_deg_rate": 1.0
     }
 
 def get_driver_lap_times(driver):
@@ -287,7 +296,9 @@ def get_driver_lap_times(driver):
                 "TyreLife": int(lap_data.iloc[0]['TyreLife']) if not pd.isna(lap_data.iloc[0]['TyreLife']) else 1,
                 "Position": int(lap_data.iloc[0]['Position']) if not pd.isna(lap_data.iloc[0]['Position']) else 10,
                 "X": float(lap_data.iloc[0]['X']) if not pd.isna(lap_data.iloc[0]['X']) else 0.0,
-                "Y": float(lap_data.iloc[0]['Y']) if not pd.isna(lap_data.iloc[0]['Y']) else 0.0
+                "Y": float(lap_data.iloc[0]['Y']) if not pd.isna(lap_data.iloc[0]['Y']) else 0.0,
+                "StartTime": float(start_time),
+                "EndTime": float(end_time)
             }
 
     return lap_times
@@ -295,37 +306,28 @@ def get_driver_lap_times(driver):
 def calculate_tire_delta(compound, life, pressure, wear_multiplier=1.0):
     """
     Realistic tire performance model with degradation cliffs.
-    Includes pressure effects on wear rate.
     """
     if compound not in TIRE_DEGRADATION_MODEL:
         compound = "MEDIUM"
 
     model = TIRE_DEGRADATION_MODEL[compound]
-
-    # Base performance (faster compounds are negative delta)
     delta = model["base_performance"]
-
-    # Gradual degradation
     degradation = model["degradation_per_lap"] * life * wear_multiplier
 
-    # Cliff effect - massive penalty after optimal life
     if life > model["cliff_point"]:
         cliff_laps = life - model["cliff_point"]
         degradation += model["cliff_penalty"] * cliff_laps
 
-    # Pressure impact on wear (under/over inflation accelerates degradation)
     if pressure < 22.5:
-        degradation *= 1.2  # Under-inflated = faster wear
+        degradation *= 1.2
     elif pressure > 23.5:
-        degradation *= 1.1  # Over-inflated = slightly faster wear
+        degradation *= 1.1
 
     return delta + degradation
 
 def calculate_engine_mode_delta(mode, engine_temp):
     """
     Engine mode performance with heating effects.
-    mode: 0=ECO, 1=NORMAL, 2=POWER
-    engine_temp: current engine temperature in °C
     """
     mode_names = ["ECO", "NORMAL", "POWER"]
     mode_name = mode_names[mode] if 0 <= mode < 3 else "NORMAL"
@@ -333,9 +335,8 @@ def calculate_engine_mode_delta(mode, engine_temp):
     engine_model = ENGINE_MODES[mode_name]
     delta = engine_model["performance_delta"]
 
-    # Overheating penalty (above 100°C)
     if engine_temp > 100:
-        overheat_penalty = (engine_temp - 100) * 0.05  # 0.05s per degree over 100°C
+        overheat_penalty = (engine_temp - 100) * 0.05
         delta += overheat_penalty
 
     return delta
@@ -343,42 +344,33 @@ def calculate_engine_mode_delta(mode, engine_temp):
 def calculate_pressure_delta(pressure):
     """
     Tire pressure impact on lap time.
-    Optimal: 22.5-23.5 PSI
     """
     if 22.5 <= pressure <= 23.5:
-        return 0.0  # Optimal range
+        return 0.0
 
-    # Outside optimal range
     deviation = abs(pressure - 23.0)
 
     if pressure < 22.5:
-        # Under-inflation: better grip initially, but worse cornering
         return deviation * 0.02
     else:
-        # Over-inflation: less contact patch, worse corners
         return deviation * 0.03
 
 def calculate_fuel_delta(fuel_load, current_lap, start_lap, fuel_efficiency=1.0):
     """
     Fuel load impact on performance (weight).
-    Diminishing returns as fuel burns.
     """
     laps_completed = current_lap - start_lap
     fuel_consumed = laps_completed * 1.5 * fuel_efficiency
     remaining_fuel = max(0, fuel_load - fuel_consumed)
 
-    # Weight penalty: each 10kg adds ~0.2s initially
-    # Diminishing effect as car gets lighter
-    baseline_fuel = 50  # Mid-race fuel load
+    baseline_fuel = 50
     fuel_diff = remaining_fuel - baseline_fuel
 
-    # Non-linear weight impact (heavier car = more penalty)
     return (fuel_diff / 10) * 0.02
 
 def interpolate_track_position(session_time, driver):
     """
     Interpolate X, Y position on track based on session time.
-    Uses telemetry data to find where the car would be at a given time.
     """
     driver_data = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].copy()
     driver_data = driver_data.dropna(subset=['SessionTime', 'X', 'Y'])
@@ -386,7 +378,6 @@ def interpolate_track_position(session_time, driver):
     if driver_data.empty:
         return {"x": 0.0, "y": 0.0}
 
-    # Find closest data points before and after the target time
     before = driver_data[driver_data['SessionTime'] <= session_time].tail(1)
     after = driver_data[driver_data['SessionTime'] >= session_time].head(1)
 
@@ -399,7 +390,6 @@ def interpolate_track_position(session_time, driver):
         row = before.iloc[0]
         return {"x": float(row['X']), "y": float(row['Y'])}
     else:
-        # Linear interpolation
         t1, x1, y1 = before.iloc[0]['SessionTime'], before.iloc[0]['X'], before.iloc[0]['Y']
         t2, x2, y2 = after.iloc[0]['SessionTime'], after.iloc[0]['X'], after.iloc[0]['Y']
 
@@ -412,10 +402,27 @@ def interpolate_track_position(session_time, driver):
 
         return {"x": float(x), "y": float(y)}
 
+def get_positions_throughout_lap(driver, lap_start_time, lap_end_time, num_samples=10):
+    """
+    Get multiple position samples throughout a lap for smooth interpolation.
+    """
+    positions = []
+    lap_duration = lap_end_time - lap_start_time
+    
+    for i in range(num_samples):
+        sample_time = lap_start_time + (lap_duration * i / (num_samples - 1))
+        pos = interpolate_track_position(sample_time, driver)
+        positions.append({
+            "time": float(sample_time),
+            "x": pos["x"],
+            "y": pos["y"]
+        })
+    
+    return positions
+
 def analyze_pit_stop_needs(ghost_state, remaining_laps, engine_temp, fuel_remaining):
     """
-    Analyze if additional pit stops are needed based on tire health, fuel, engine temp.
-    Returns recommendations for pit stops.
+    Analyze if additional pit stops are needed.
     """
     recommendations = []
     needs_pit = False
@@ -428,7 +435,6 @@ def analyze_pit_stop_needs(ghost_state, remaining_laps, engine_temp, fuel_remain
 
     model = TIRE_DEGRADATION_MODEL[compound]
 
-    # Check tire cliff
     if tire_life >= model["cliff_point"]:
         needs_pit = True
         recommendations.append({
@@ -443,14 +449,13 @@ def analyze_pit_stop_needs(ghost_state, remaining_laps, engine_temp, fuel_remain
             "recommended_compound": "MEDIUM" if compound == "SOFT" else "HARD"
         })
 
-    # Check fuel
     fuel_needed = remaining_laps * 1.5
     if fuel_remaining < fuel_needed:
         needs_pit = True
         recommendations.append({
             "reason": f"Insufficient fuel ({fuel_remaining:.1f}kg, need {fuel_needed:.1f}kg)",
             "urgency": "critical",
-            "recommended_compound": compound  # Keep same compound if fuel-only stop
+            "recommended_compound": compound
         })
     elif fuel_remaining < 10:
         recommendations.append({
@@ -459,7 +464,6 @@ def analyze_pit_stop_needs(ghost_state, remaining_laps, engine_temp, fuel_remain
             "recommended_compound": compound
         })
 
-    # Check engine overheating
     if engine_temp > 110:
         needs_pit = True
         recommendations.append({
@@ -486,14 +490,12 @@ def calculate_position_at_lap(lap, cumulative_time):
     if lap_data.empty:
         return 10
 
-    # Get session time for each driver at this lap
     driver_times = {}
     for driver in lap_data['Driver'].dropna().unique():
         driver_lap_data = lap_data[lap_data['Driver'] == driver]
         if not driver_lap_data.empty:
             driver_times[driver] = driver_lap_data['SessionTime'].min()
 
-    # Count how many drivers are ahead
     position = 1
     for driver, time in driver_times.items():
         if time < cumulative_time:
@@ -503,7 +505,7 @@ def calculate_position_at_lap(lap, cumulative_time):
 
 @app.route('/api/run_simulation', methods=['POST'])
 def run_simulation():
-    """Run a lap-by-lap Digital Twin simulation"""
+    """Run a lap-by-lap Digital Twin simulation with continuous position tracking"""
     if TELEMETRY_DF is None or TELEMETRY_DF.empty:
         return jsonify({"error": "Telemetry data not loaded."}), 500
 
@@ -517,28 +519,24 @@ def run_simulation():
         fuel_load = float(data.get('fuel_load', 65))
         engine_mode = int(data.get('engine_mode', 1))
 
-        # Get historical lap times
         driver_laps = get_driver_lap_times(driver)
 
         if not driver_laps or start_lap not in driver_laps:
             return jsonify({"error": f"No lap data for driver {driver} at lap {start_lap}"}), 400
 
-        # Create driver baseline
         baseline = create_driver_baseline(driver, start_lap)
 
-        # Get engine mode configuration
         mode_names = ["ECO", "NORMAL", "POWER"]
         mode_name = mode_names[engine_mode] if 0 <= engine_mode < 3 else "NORMAL"
         engine_config = ENGINE_MODES[mode_name]
 
-        # Initialize ghost state with realistic physics tracking
         ghost_state = {
             "current_compound": str(driver_laps[start_lap]["Compound"]),
             "tyre_life": int(driver_laps[start_lap]["TyreLife"]),
             "cumulative_time": 0.0,
             "cumulative_session_time": sum([driver_laps[l]["LapTime"] for l in range(1, start_lap) if l in driver_laps]),
             "position": int(driver_laps[start_lap]["Position"]),
-            "engine_temp": 85.0,  # Start at normal operating temp
+            "engine_temp": 85.0,
             "fuel_remaining": fuel_load
         }
 
@@ -554,7 +552,6 @@ def run_simulation():
             base_lap_time = driver_laps[lap]["LapTime"]
             remaining_laps = min(max_lap, 52) - lap
 
-            # Calculate realistic deltas using new models
             tire_delta = calculate_tire_delta(
                 ghost_state["current_compound"],
                 ghost_state["tyre_life"],
@@ -570,56 +567,64 @@ def run_simulation():
                 engine_config["fuel_efficiency"]
             )
 
-            # Update engine temperature based on mode
             ghost_state["engine_temp"] += engine_config["heating_rate"]
-            ghost_state["engine_temp"] = max(70, min(130, ghost_state["engine_temp"]))  # Clamp 70-130°C
+            ghost_state["engine_temp"] = max(70, min(130, ghost_state["engine_temp"]))
 
-            # Fuel consumption
             lap_fuel_consumption = baseline["fuel_consumption_rate"] * engine_config["fuel_efficiency"]
             ghost_state["fuel_remaining"] -= lap_fuel_consumption
             ghost_state["fuel_remaining"] = max(0, ghost_state["fuel_remaining"])
 
-            # Apply pit stop
+            # Calculate lap start time BEFORE updating cumulative time
+            lap_start_time = ghost_state["cumulative_session_time"]
+
             if lap == pit_lap:
-                lap_time = base_lap_time + 22.0  # Pit time penalty
+                lap_time = base_lap_time + 22.0
                 ghost_state["current_compound"] = pit_compound
                 ghost_state["tyre_life"] = 0
-                ghost_state["fuel_remaining"] = fuel_load  # Refuel
-                ghost_state["engine_temp"] = max(70, ghost_state["engine_temp"] - 15)  # Cooling during pit
+                ghost_state["fuel_remaining"] = fuel_load
+                ghost_state["engine_temp"] = max(70, ghost_state["engine_temp"] - 15)
                 pit_stops.append({
                     "lap": int(lap),
                     "reason": "Planned pit stop",
                     "compound": pit_compound
                 })
             else:
-                # Sum all deltas (capped to prevent unrealistic swings)
                 total_delta = tire_delta + engine_delta + pressure_delta + fuel_delta
-                total_delta = max(-0.5, min(0.5, total_delta))  # Cap at ±0.5s per lap
+                total_delta = max(-0.5, min(0.5, total_delta))
                 lap_time = base_lap_time + total_delta
 
             ghost_state["cumulative_time"] += lap_time
             ghost_state["cumulative_session_time"] += lap_time
             ghost_state["tyre_life"] += 1
 
-            # Calculate position and track coordinates
+            # Calculate lap end time AFTER updating
+            lap_end_time = ghost_state["cumulative_session_time"]
+
+            # Get multiple position samples throughout the lap
+            position_samples = get_positions_throughout_lap(
+                driver, 
+                lap_start_time, 
+                lap_end_time, 
+                num_samples=10
+            )
+
             new_position = calculate_position_at_lap(lap, ghost_state["cumulative_session_time"])
-            ghost_track_pos = interpolate_track_position(ghost_state["cumulative_session_time"], driver)
 
             simulated_laps.append({
                 "lap": int(lap),
                 "lap_time": round(float(lap_time), 3),
                 "cumulative_time": round(float(ghost_state["cumulative_time"]), 3),
                 "cumulative_session_time": round(float(ghost_state["cumulative_session_time"]), 3),
+                "lap_start_time": round(float(lap_start_time), 3),
+                "lap_end_time": round(float(lap_end_time), 3),
                 "position": int(new_position),
                 "compound": str(ghost_state["current_compound"]),
                 "tyre_life": int(ghost_state["tyre_life"]),
-                "ghost_x": ghost_track_pos["x"],
-                "ghost_y": ghost_track_pos["y"],
+                "position_samples": position_samples,  # Multiple positions throughout lap
                 "engine_temp": round(float(ghost_state["engine_temp"]), 1),
                 "fuel_remaining": round(float(ghost_state["fuel_remaining"]), 1)
             })
 
-            # Check if additional pit stops needed
             pit_analysis = analyze_pit_stop_needs(
                 ghost_state,
                 remaining_laps,
@@ -632,11 +637,9 @@ def run_simulation():
                     if rec["urgency"] == "critical":
                         warnings.append(f"Lap {lap}: {rec['reason']}")
 
-        # Calculate summary statistics
         final_lap = simulated_laps[-1]
         actual_final_time = sum([driver_laps[l]["LapTime"] for l in range(start_lap, max_lap + 1) if l in driver_laps])
 
-        # Final analysis
         final_analysis = analyze_pit_stop_needs(
             ghost_state,
             0,
@@ -644,7 +647,6 @@ def run_simulation():
             ghost_state["fuel_remaining"]
         )
 
-        # Calculate tire health percentage
         model = TIRE_DEGRADATION_MODEL.get(ghost_state["current_compound"], TIRE_DEGRADATION_MODEL["MEDIUM"])
         tire_health_pct = max(0, int(100 - (ghost_state["tyre_life"] / model["cliff_point"]) * 100))
 
@@ -673,4 +675,3 @@ def run_simulation():
 if __name__ == '__main__':
     load_data()
     app.run(host='0.0.0.0', port=5001, debug=True)
-
