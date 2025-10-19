@@ -329,7 +329,7 @@ const App = () => {
       // --- 2. Engine Heat Logic ---
       const heatRates = {
         0: -0.8, // ECO: cools down
-        1: 1.2, // NORMAL: cools slightly
+        1: 1.1, // NORMAL: cools slightly
         2: 1.5, // POWER: heats up quickly
       };
       const heatRate = heatRates[engineMode] || -0.2;
