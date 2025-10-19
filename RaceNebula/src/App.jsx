@@ -24,6 +24,59 @@ import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 // Backend API configuration
 const API_BASE_URL = "http://localhost:5001/api";
 
+// === DELTA SIMULATION HELPER ===
+const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
+  if (!driverData) return { telemetry: driverData, weather };
+
+  const basePressure = 23;
+  const pressureDiff = tirePressure - basePressure;
+  const fuelDiff = 65 - fuelLoad; // lighter car => positive = faster
+
+  // Compound performance multipliers
+  const compoundEffect = {
+    SOFT: { speed: +5, wear: -2 },
+    MEDIUM: { speed: 0, wear: 0 },
+    HARD: { speed: -3, wear: +1 },
+  }[compound] || { speed: 0, wear: 0 };
+
+  // --- Apply deltas to telemetry values ---
+  const adjustedTelemetry = {
+    ...driverData,
+    Speed:
+      (driverData.Speed || 0) +
+      compoundEffect.speed +
+      fuelDiff * 0.8 -
+      Math.abs(pressureDiff) * 3.0,
+    RPM:
+      (driverData.RPM || 0) +
+      (compoundEffect.speed + fuelDiff * 0.2) * 20,
+    Throttle: Math.min(
+      100,
+      (driverData.Throttle || 0) + fuelDiff * 0.3
+    ),
+    TyreLife:
+      (driverData.TyreLife || 0) +
+      compoundEffect.wear -
+      Math.abs(pressureDiff) * 2.0,
+    X:
+      (driverData.X || 0) +
+      (compoundEffect.speed + fuelDiff * 0.2) * 0.15,
+    Y:
+      (driverData.Y || 0) +
+      (compoundEffect.speed + fuelDiff * 0.2) * 0.0,
+  };
+
+  // --- Apply deltas to weather values (tiny effects) ---
+  const adjustedWeather = {
+    AirTemp: 0, // Set to 0 or base value if you remove the separate API call
+    TrackTemp: 0, // Set to 0 or base value
+    WindSpeed: 0,
+    Rainfall: weather?.Rainfall || false,
+  };
+
+  return { telemetry: adjustedTelemetry, weather: adjustedWeather };
+};
+
 const App = () => {
   // Playback controls
   const [sessionTime, setSessionTime] = useState(0);
@@ -88,17 +141,13 @@ const App = () => {
 
   // Fetch race data from backend
   const fetchRaceData = async (time) => {
-    console.log("fetching data");
     try {
       setError(null);
-      console.log(`Fetching data for time: ${time}`);
       const response = await fetch(
         `${API_BASE_URL}/race_state_by_time?time=${time}`
       );
-      console.log("Backend response:", response);
 
       if (!response.ok) {
-        console.error("Backend response not OK:", response.status);
         setError(`Backend error: ${response.status}`);
         setIsLoading(false);
         return;
@@ -106,37 +155,23 @@ const App = () => {
 
       const data = await response.json();
 
-      console.log(`=== DATA AT TIME ${time} ===`);
-      console.log("Drivers count:", data.drivers?.length);
-      console.log("Selected driver:", selectedDriver);
-      const selectedData = data.drivers?.find(
-        (d) => d.Driver === selectedDriver
-      );
-      console.log("Selected driver data:", selectedData);
-      console.log("==========================");
-
       if (data.drivers && data.drivers.length > 0) {
-        // Filter out invalid drivers (those with NaN or missing Driver field)
         const validDrivers = data.drivers.filter(
           (d) => d.Driver && d.Driver !== "NaN" && typeof d.Driver === "string"
         );
-        console.log("Valid drivers:", validDrivers.length);
 
         setAllDriversData(validDrivers);
 
-        // Update available drivers list (only once)
         if (availableDrivers.length === 0) {
           const uniqueDrivers = [
             ...new Set(validDrivers.map((d) => d.Driver)),
           ].filter(Boolean);
-          console.log("Unique drivers:", uniqueDrivers);
           setAvailableDrivers(uniqueDrivers);
           if (!selectedDriver && uniqueDrivers.length > 0) {
             setSelectedDriver(uniqueDrivers[0]);
           }
         }
 
-        // Update drivers positions for track map
         const driversWithPositions = validDrivers
           .filter((d) => d.X && d.Y && !isNaN(d.X) && !isNaN(d.Y))
           .map((d, idx) => ({
@@ -151,10 +186,19 @@ const App = () => {
 
         setDrivers(driversWithPositions);
 
-        // Find selected driver's data
         const focusedDriver =
           validDrivers.find((d) => d.Driver === selectedDriver) ||
           validDrivers[0];
+
+        // === APPLY DELTAS HERE ===
+        const { telemetry: adjustedTelemetry, weather: adjustedWeather } =
+          applyDeltas(
+            focusedDriver,
+            weather,
+            tirePressure[0],
+            fuelLoad[0],
+            ["SOFT", "MEDIUM", "HARD"][tireCompound]
+          );
 
         setRaceState({
           lap: focusedDriver.LapNumber || 0,
@@ -172,41 +216,40 @@ const App = () => {
         }
 
         setTelemetry({
-          RPM: focusedDriver.RPM || 0,
+          RPM: adjustedTelemetry.RPM || 0,
           maxRpm: 15000,
-          nGear: focusedDriver.nGear || 0,
-          Throttle: focusedDriver.Throttle || 0,
-          Brake: focusedDriver.Brake || false,
-          Speed: focusedDriver.Speed || 0,
-          DRS: focusedDriver.DRS || 0,
-          Compound: focusedDriver.Compound || "MEDIUM",
-          TyreLife: focusedDriver.TyreLife || 0,
-          X: focusedDriver.X || 0,
-          Y: focusedDriver.Y || 0,
-          DriverAhead: focusedDriver.DriverAhead || null,
-          GapToAhead: newGap,
+          nGear: adjustedTelemetry.nGear || 0,
+          Throttle: adjustedTelemetry.Throttle || 0,
+          Brake: adjustedTelemetry.Brake || false,
+          Speed: adjustedTelemetry.Speed || 0,
+          DRS: adjustedTelemetry.DRS || 0,
+          Compound: adjustedTelemetry.Compound || "MEDIUM",
+          TyreLife: adjustedTelemetry.TyreLife || 0,
+          X: adjustedTelemetry.X || 0,
+          Y: adjustedTelemetry.Y || 0,
+          DriverAhead: adjustedTelemetry.DriverAhead || null,
+          GapToAhead: adjustedTelemetry.GapToAhead || null,
         });
 
-        // Track position history
         setPositionHistory((prev) => {
           const newHistory = [...prev, focusedDriver.Position || 0];
-          return newHistory.slice(-20); // Keep last 20 data points
+          return newHistory.slice(-20);
         });
 
-        // Fetch weather data
+        // Fetch and apply weather
         try {
           const weatherResponse = await fetch(
             `${API_BASE_URL}/weather_by_time?time=${time}`
           );
           const weatherData = await weatherResponse.json();
           setWeather({
-            AirTemp: weatherData.AirTemp || 0,
-            TrackTemp: weatherData.TrackTemp || 0,
+            AirTemp: (weatherData.AirTemp || 0) + adjustedWeather.AirTemp,
+            TrackTemp: (weatherData.TrackTemp || 0) + adjustedWeather.TrackTemp,
             WindSpeed: weatherData.WindSpeed || 0,
             Rainfall: weatherData.Rainfall || false,
           });
-        } catch (err) {
-          console.log("Weather data not available");
+        } catch {
+          console.log("Weather data unavailable");
         }
       }
       setIsLoading(false);
@@ -217,7 +260,7 @@ const App = () => {
     }
   };
 
-  // Playback effect - updates sessionTime every 1 second
+  // Playback effect
   useEffect(() => {
     let interval;
     if (isPlaying) {
@@ -234,7 +277,7 @@ const App = () => {
     fetchRaceData(3700);
   }, []);
 
-  // Fetch data when sessionTime changes (but not on initial mount)
+  // Refetch when time changes
   useEffect(() => {
     if (selectedDriver && sessionTime !== 0) {
       fetchRaceData(sessionTime);
@@ -242,6 +285,7 @@ const App = () => {
   }, [sessionTime]);
 
   // Fetch track outline and driver info when driver changes
+  // Refetch when driver changes
   useEffect(() => {
     if (selectedDriver) {
       fetchTrackOutline(selectedDriver);
@@ -249,6 +293,25 @@ const App = () => {
       fetchRaceData(sessionTime);
     }
   }, [selectedDriver]);
+
+  // Optional live delta updates when sliders move
+  useEffect(() => {
+    if (selectedDriver && allDriversData.length > 0) {
+      const focusedDriver =
+        allDriversData.find((d) => d.Driver === selectedDriver) ||
+        allDriversData[0];
+      const { telemetry: adjustedTelemetry, weather: adjustedWeather } =
+        applyDeltas(
+          focusedDriver,
+          weather,
+          tirePressure[0],
+          fuelLoad[0],
+          ["SOFT", "MEDIUM", "HARD"][tireCompound]
+        );
+      setTelemetry(adjustedTelemetry);
+      setWeather(adjustedWeather);
+    }
+  }, [tirePressure, fuelLoad, tireCompound]);
 
   const fetchTrackOutline = async (driver) => {
     try {
@@ -301,11 +364,14 @@ const App = () => {
       });
       const data = await response.json();
       setPrediction(data.scenario?.notes || "Prediction calculated");
-    } catch (error) {
-      console.error("Error predicting scenario:", error);
+    } catch {
       setPrediction("Unable to calculate prediction");
     }
   };
+
+  // === Normalize, render, and UI unchanged ===
+  // (the rest of your render code below stays identical)
+
 
   // Normalize X,Y coordinates using unified bounds for track and drivers
   const normalizeWithUnifiedBounds = (drivers, trackOutline) => {
