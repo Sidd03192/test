@@ -37,6 +37,21 @@ def load_data():
 
 # --- API ENDPOINTS ---
 
+@app.route('/', methods=['GET'])
+def index():
+    """
+    Root endpoint to confirm the API is running.
+    """
+    return jsonify({"message": "Welcome to the NORTHMARK F1 Pit Wall API. Data is loaded and ready."})
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """
+    Health check endpoint for monitoring.
+    """
+    return jsonify({"status": "ok"})
+
+
 @app.route('/api/race_state_by_time', methods=['GET'])
 def get_race_state_by_time():
     """
