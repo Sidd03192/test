@@ -45,25 +45,28 @@ const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
     Speed:
       (driverData.Speed || 0) +
       compoundEffect.speed +
-      fuelDiff * 0.8 -
-      Math.abs(pressureDiff) * 3.0,
+      fuelDiff * 0.4 -
+      Math.abs(pressureDiff) * 1.5,
     RPM:
       (driverData.RPM || 0) +
       (compoundEffect.speed + fuelDiff * 0.2) * 20,
-    Throttle: Math.min(
-      100,
-      (driverData.Throttle || 0) + fuelDiff * 0.3
-    ),
+    Throttle: Math.max(
+      0,
+      Math.min(
+        100,
+        (driverData.Throttle || 0) + fuelDiff * 0.3
+      )
+    ),
     TyreLife:
       (driverData.TyreLife || 0) +
       compoundEffect.wear -
-      Math.abs(pressureDiff) * 2.0,
+      Math.abs(pressureDiff) * 1.0,
     X:
       (driverData.X || 0) +
       (compoundEffect.speed + fuelDiff * 0.2) * 0.15,
     Y:
       (driverData.Y || 0) +
-      (compoundEffect.speed + fuelDiff * 0.2) * 0.0,
+      (compoundEffect.speed + fuelDiff * 0.2) * 0.09,
   };
 
   // --- Apply deltas to weather values (tiny effects) ---
