@@ -1,0 +1,21 @@
+Driver,TeamName,TeamColor,HeadshotUrl,FullName,BroadcastName
+VER,Red Bull Racing,3671C6,https://www.formula1.com/content/dam/fom-website/drivers/M/MAXVER01_Max_Verstappen/maxver01.png.transform/1col/image.png,Max Verstappen,M VERSTAPPEN
+NOR,McLaren,F58020,https://www.formula1.com/content/dam/fom-website/drivers/L/LANNOR01_Lando_Norris/lannor01.png.transform/1col/image.png,Lando Norris,L NORRIS
+HAM,Mercedes,6CD3BF,https://www.formula1.com/content/dam/fom-website/drivers/L/LEWHAM01_Lewis_Hamilton/lewham01.png.transform/1col/image.png,Lewis Hamilton,L HAMILTON
+PIA,McLaren,F58020,https://www.formula1.com/content/dam/fom-website/drivers/O/OSCPIA01_Oscar_Piastri/oscpia01.png.transform/1col/image.png,Oscar Piastri,O PIASTRI
+RUS,Mercedes,6CD3BF,https://www.formula1.com/content/dam/fom-website/drivers/G/GEORUS01_George_Russell/georus01.png.transform/1col/image.png,George Russell,G RUSSELL
+PER,Red Bull Racing,3671C6,https://www.formula1.com/content/dam/fom-website/drivers/S/SERPER01_Sergio_Perez/serper01.png.transform/1col/image.png,Sergio Perez,S PEREZ
+ALO,Aston Martin,358C75,https://www.formula1.com/content/dam/fom-website/drivers/F/FERALO01_Fernando_Alonso/feralo01.png.transform/1col/image.png,Fernando Alonso,F ALONSO
+ALB,Williams,37BEDD,https://www.formula1.com/content/dam/fom-website/drivers/A/ALEALB01_Alexander_Albon/alealb01.png.transform/1col/image.png,Alexander Albon,A ALBON
+LEC,Ferrari,F91536,https://www.formula1.com/content/dam/fom-website/drivers/C/CHALEC01_Charles_Leclerc/chalec01.png.transform/1col/image.png,Charles Leclerc,C LECLERC
+SAI,Ferrari,F91536,https://www.formula1.com/content/dam/fom-website/drivers/C/CARSAI01_Carlos_Sainz/carsai01.png.transform/1col/image.png,Carlos Sainz,C SAINZ
+SAR,Williams,37BEDD,https://www.formula1.com/content/dam/fom-website/drivers/L/LOGSAR01_Logan_Sargeant/logsar01.png.transform/1col/image.png,Logan Sargeant,L SARGEANT
+BOT,Alfa Romeo,C92D4B,https://www.formula1.com/content/dam/fom-website/drivers/V/VALBOT01_Valtteri_Bottas/valbot01.png.transform/1col/image.png,Valtteri Bottas,V BOTTAS
+HUL,Haas F1 Team,B6BABD,https://www.formula1.com/content/dam/fom-website/drivers/N/NICHUL01_Nico_Hulkenberg/nichul01.png.transform/1col/image.png,Nico Hulkenberg,N HULKENBERG
+STR,Aston Martin,358C75,https://www.formula1.com/content/dam/fom-website/drivers/L/LANSTR01_Lance_Stroll/lanstr01.png.transform/1col/image.png,Lance Stroll,L STROLL
+ZHO,Alfa Romeo,C92D4B,https://www.formula1.com/content/dam/fom-website/drivers/G/GUAZHO01_Guanyu_Zhou/guazho01.png.transform/1col/image.png,Guanyu Zhou,G ZHOU
+TSU,AlphaTauri,5E8FAA,https://www.formula1.com/content/dam/fom-website/drivers/Y/YUKTSU01_Yuki_Tsunoda/yuktsu01.png.transform/1col/image.png,Yuki Tsunoda,Y TSUNODA
+DEV,AlphaTauri,5E8FAA,https://www.formula1.com/content/dam/fom-website/drivers/N/NYCDEV01_Nyck_De%20Vries/nycdev01.png.transform/1col/image.png,Nyck De Vries,N DE VRIES
+GAS,Alpine,2293D1,https://www.formula1.com/content/dam/fom-website/drivers/P/PIEGAS01_Pierre_Gasly/piegas01.png.transform/1col/image.png,Pierre Gasly,P GASLY
+MAG,Haas F1 Team,B6BABD,https://www.formula1.com/content/dam/fom-website/drivers/K/KEVMAG01_Kevin_Magnussen/kevmag01.png.transform/1col/image.png,Kevin Magnussen,K MAGNUSSEN
+OCO,Alpine,2293D1,https://www.formula1.com/content/dam/fom-website/drivers/E/ESTOCO01_Esteban_Ocon/estoco01.png.transform/1col/image.png,Esteban Ocon,E OCON

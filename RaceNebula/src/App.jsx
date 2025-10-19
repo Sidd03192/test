@@ -19,6 +19,7 @@ import {
   Target,
   Users,
 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 
 // Backend API configuration
 const API_BASE_URL = "http://localhost:5001/api";
@@ -64,6 +65,13 @@ const App = () => {
     Y: 0,
     DriverAhead: null,
     GapToAhead: null,
+  });
+
+  const [previousGap, setPreviousGap] = useState(null);
+  const [teamInfo, setTeamInfo] = useState({
+    TeamColor: null,
+    HeadshotUrl: null,
+    TeamName: null,
   });
 
   const [drivers, setDrivers] = useState([]);
@@ -157,6 +165,12 @@ const App = () => {
           sessionTime: time,
         });
 
+        // Track previous gap for color indication
+        const newGap = focusedDriver.GapToAhead || null;
+        if (newGap !== null && telemetry.GapToAhead !== null) {
+          setPreviousGap(telemetry.GapToAhead);
+        }
+
         setTelemetry({
           RPM: focusedDriver.RPM || 0,
           maxRpm: 15000,
@@ -170,7 +184,7 @@ const App = () => {
           X: focusedDriver.X || 0,
           Y: focusedDriver.Y || 0,
           DriverAhead: focusedDriver.DriverAhead || null,
-          GapToAhead: focusedDriver.GapToAhead || null,
+          GapToAhead: newGap,
         });
 
         // Track position history
@@ -227,10 +241,11 @@ const App = () => {
     }
   }, [sessionTime]);
 
-  // Fetch track outline when driver changes
+  // Fetch track outline and driver info when driver changes
   useEffect(() => {
     if (selectedDriver) {
       fetchTrackOutline(selectedDriver);
+      fetchDriverInfo(selectedDriver);
       fetchRaceData(sessionTime);
     }
   }, [selectedDriver]);
@@ -246,6 +261,24 @@ const App = () => {
       }
     } catch (err) {
       console.error("Failed to fetch track outline:", err);
+    }
+  };
+
+  const fetchDriverInfo = async (driver) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/driver_info?driver=${driver}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setTeamInfo({
+          TeamColor: data.TeamColor || null,
+          HeadshotUrl: data.HeadshotUrl || null,
+          TeamName: data.TeamName || null,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to fetch driver info:", err);
     }
   };
 
@@ -502,15 +535,34 @@ const App = () => {
         {/* Race State & Weather */}
         <Card className="border-border bg-card/95 backdrop-blur shadow-lg">
           <CardContent className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="flex justify-between">
               {/* Driver Info */}
               <div className="space-y-3">
+                <Badge
+                  variant="secondary"
+                  className="text-base px-4 py-2 font-bold flex items-center gap-2"
+                  style={{
+                    borderLeft: teamInfo.TeamColor
+                      ? `4px solid #${teamInfo.TeamColor}`
+                      : "none",
+                  }}
+                >
+                  {teamInfo.HeadshotUrl && (
+                    <img
+                      src={teamInfo.HeadshotUrl}
+                      alt={raceState.driver}
+                      className="w-8 h-8 rounded-full object-cover"
+                    />
+                  )}
+                  {raceState.driver} | {teamInfo.TeamName || raceState.team}
+                </Badge>
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-2 bg-primary rounded-full animate-pulse"></div>
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                     Driver Status
                   </h3>
                 </div>
+
                 <div className="space-y-2">
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
@@ -529,22 +581,35 @@ const App = () => {
                       </span>
                     </div>
                   </div>
-                  <Badge
-                    variant="secondary"
-                    className="text-base px-4 py-2 font-bold"
-                  >
-                    {raceState.driver} | {raceState.team}
-                  </Badge>
+
                   {/* Gap to driver ahead */}
                   {telemetry.DriverAhead && telemetry.GapToAhead !== null && (
                     <div className="flex items-center gap-2 mt-2 bg-secondary/50 rounded-lg px-3 py-2">
                       <Target className="h-4 w-4 text-accent" />
                       <div>
-                        <span className="text-xs text-muted-foreground">Gap to </span>
-                        <span className="text-sm font-bold text-accent">{telemetry.DriverAhead}</span>
-                        <span className="text-xs text-muted-foreground"> : </span>
-                        <span className="text-lg font-bold text-primary">
-                          {telemetry.GapToAhead > 0 ? `+${telemetry.GapToAhead.toFixed(1)}m` : `${telemetry.GapToAhead.toFixed(1)}m`}
+                        <span className="text-xs text-muted-foreground">
+                          Gap to{" "}
+                        </span>
+                        <span className="text-sm font-bold text-accent">
+                          {telemetry.DriverAhead}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {" "}
+                          :{" "}
+                        </span>
+                        <span
+                          className={`text-lg font-bold ${
+                            previousGap !== null &&
+                            telemetry.GapToAhead !== null
+                              ? telemetry.GapToAhead > previousGap
+                                ? "text-red-500"
+                                : "text-green-500"
+                              : "text-primary"
+                          }`}
+                        >
+                          {telemetry.GapToAhead > 0
+                            ? `+${telemetry.GapToAhead.toFixed(1)}m`
+                            : `${telemetry.GapToAhead.toFixed(1)}m`}
                         </span>
                       </div>
                     </div>
@@ -552,8 +617,18 @@ const App = () => {
                 </div>
               </div>
 
+              {/* Alerts */}
+
+              <div className="space-y-3 min-w-[500px] align-center h-full justify-center ">
+                <Alert variant="destructive">
+                  <AlertTitle>Heads up!</AlertTitle>
+                  <AlertDescription>
+                    This is how the alert gonna be lookin gang
+                  </AlertDescription>
+                </Alert>
+              </div>
               {/* Weather */}
-              <div className="space-y-3">
+              <div className="space-y-3 ">
                 <div className="flex items-center gap-2">
                   <Cloud className="h-4 w-4 text-primary" />
                   <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">

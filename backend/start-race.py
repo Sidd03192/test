@@ -1,7 +1,6 @@
 import fastf1 as ff1
 import pandas as pd
 import os
-import numpy as np
 
 # --- CONFIGURATION ---
 YEAR = 2023
@@ -34,46 +33,60 @@ def process_race_data(year, grand_prix, session):
     drivers = race_session.results['Abbreviation'].dropna().unique()
     all_driver_telemetry = []
 
+    # Extract driver/team info and save separately
+    driver_info_list = []
+    for _, driver_result in race_session.results.iterrows():
+        driver_info_list.append({
+            'Driver': driver_result.get('Abbreviation'),
+            'TeamName': driver_result.get('TeamName'),
+            'TeamColor': driver_result.get('TeamColor'),
+            'HeadshotUrl': driver_result.get('HeadshotUrl'),
+            'FullName': driver_result.get('FullName'),
+            'BroadcastName': driver_result.get('BroadcastName'),
+        })
+
+    driver_info_df = pd.DataFrame(driver_info_list)
+    driver_info_df.to_csv('driver_info.csv', index=False)
+    print(f"Saved driver info to driver_info.csv")
+
     for driver in drivers:
         print(f"  Processing driver: {driver}")
-        driver_laps = laps.pick_drivers([driver])
-
-        telemetry = driver_laps.get_telemetry()
-        if telemetry.empty:
-            continue
-
-        # Calculate driver ahead and gap distance
         try:
-            driver_ahead_array, distance_to_ahead_array = telemetry.calculate_driver_ahead()
-            telemetry['DriverAhead'] = driver_ahead_array
-            telemetry['GapToAhead'] = distance_to_ahead_array
-            print(f"    ✓ Calculated driver ahead data for {driver}")
+            driver_laps = laps.pick_drivers([driver])
+
+            telemetry = driver_laps.get_telemetry()
+            if telemetry.empty:
+                print(f"    ⚠ No telemetry data for {driver}")
+                continue
+
+            telemetry['Driver'] = driver
+            telemetry['Team'] = driver_laps.iloc[0]['Team']
+
+            lap_context_data = driver_laps[[
+                'LapNumber', 'Stint', 'Compound', 'TyreLife',
+                'Position', 'TrackStatus', 'LapStartTime'
+            ]].rename(columns={'LapStartTime': 'SessionTime'})
+
+            telemetry = pd.merge_asof(
+                telemetry.sort_values('SessionTime'),
+                lap_context_data.sort_values('SessionTime'),
+                on='SessionTime',
+                direction='backward'
+            )
+            all_driver_telemetry.append(telemetry)
+            print(f"    OK - Successfully processed {driver}")
         except Exception as e:
-            print(f"    ⚠ Could not calculate driver ahead for {driver}: {e}")
-            telemetry['DriverAhead'] = None
-            telemetry['GapToAhead'] = None
-
-        telemetry['Driver'] = driver
-        telemetry['Team'] = driver_laps.iloc[0]['Team']
-
-        lap_context_data = driver_laps[[
-            'LapNumber', 'Stint', 'Compound', 'TyreLife',
-            'Position', 'TrackStatus', 'LapStartTime'
-        ]].rename(columns={'LapStartTime': 'SessionTime'})
-
-        telemetry = pd.merge_asof(
-            telemetry.sort_values('SessionTime'),
-            lap_context_data.sort_values('SessionTime'),
-            on='SessionTime',
-            direction='backward'
-        )
-        all_driver_telemetry.append(telemetry)
+            print(f"    WARN - Failed to process telemetry for {driver}: {str(e)[:100]}")
+            continue
 
     if not all_driver_telemetry:
         print("No telemetry data found for any driver.")
         return pd.DataFrame(), pd.DataFrame()
-        
+
     full_telemetry_df = pd.concat(all_driver_telemetry)
+
+    # Note: Gap calculations will be done dynamically in the API to save processing time
+    print("Skipping gap calculations - will be computed on-demand in API")
     
     # --- 3. PROCESS WEATHER DATA ---
     weather_df = race_session.weather_data
@@ -104,7 +117,7 @@ def process_race_data(year, grand_prix, session):
     final_columns = [
         'Date', 'SessionTime', 'Driver', 'Team', 'LapNumber', 'Position', 'Stint',
         'Compound', 'TyreLife', 'Speed', 'RPM', 'nGear', 'Throttle', 'Brake',
-        'DRS', 'X', 'Y', 'Z', 'TrackStatus', 'DriverAhead', 'GapToAhead'
+        'DRS', 'X', 'Y', 'Z', 'TrackStatus'
     ]
     
     existing_columns = [col for col in final_columns if col in full_telemetry_df.columns]
@@ -131,13 +144,13 @@ if __name__ == '__main__':
     
     if not telemetry_df.empty:
         telemetry_df.to_csv(TELEMETRY_OUTPUT_FILE, index=False)
-        print(f"✅ Successfully exported telemetry data to {TELEMETRY_OUTPUT_FILE}")
+        print(f"SUCCESS - Exported telemetry data to {TELEMETRY_OUTPUT_FILE}")
         print("\n--- Telemetry Data Preview ---")
         print(telemetry_df.head())
-    
+
     if not weather_df.empty:
         weather_df.to_csv(WEATHER_OUTPUT_FILE, index=False)
-        print(f"✅ Successfully exported weather data to {WEATHER_OUTPUT_FILE}")
+        print(f"SUCCESS - Exported weather data to {WEATHER_OUTPUT_FILE}")
         print("\n--- Weather Data Preview ---")
         print(weather_df.head())
 

@@ -11,15 +11,17 @@ CORS(app)
 # --- CONFIGURATION ---
 TELEMETRY_DATA_FILE = 'race_data_timeseries.csv'
 WEATHER_DATA_FILE = 'weather_data.csv'
+DRIVER_INFO_FILE = 'driver_info.csv'
 TELEMETRY_DF = None
 WEATHER_DF = None
+DRIVER_INFO_DF = None
 
 def load_data():
     """
-    Loads both the telemetry and weather data from their respective CSV files.
+    Loads telemetry, weather, and driver info data from CSV files.
     """
-    global TELEMETRY_DF, WEATHER_DF
-    
+    global TELEMETRY_DF, WEATHER_DF, DRIVER_INFO_DF
+
     if os.path.exists(TELEMETRY_DATA_FILE):
         print(f"Loading telemetry data from {TELEMETRY_DATA_FILE}...")
         TELEMETRY_DF = pd.read_csv(TELEMETRY_DATA_FILE)
@@ -27,7 +29,7 @@ def load_data():
     else:
         print(f"ERROR: {TELEMETRY_DATA_FILE} not found. Please run the data exporter script.")
         TELEMETRY_DF = pd.DataFrame()
-        
+
     if os.path.exists(WEATHER_DATA_FILE):
         print(f"Loading weather data from {WEATHER_DATA_FILE}...")
         WEATHER_DF = pd.read_csv(WEATHER_DATA_FILE)
@@ -35,6 +37,14 @@ def load_data():
     else:
         print(f"ERROR: {WEATHER_DATA_FILE} not found. Please run the data exporter script.")
         WEATHER_DF = pd.DataFrame()
+
+    if os.path.exists(DRIVER_INFO_FILE):
+        print(f"Loading driver info from {DRIVER_INFO_FILE}...")
+        DRIVER_INFO_DF = pd.read_csv(DRIVER_INFO_FILE)
+        print("Driver info loaded successfully.")
+    else:
+        print(f"WARN: {DRIVER_INFO_FILE} not found.")
+        DRIVER_INFO_DF = pd.DataFrame()
 
 # --- API ENDPOINTS ---
 
@@ -71,16 +81,32 @@ def get_race_state_by_time():
     result_list = []
     # Get a list of unique drivers present in the dataset
     unique_drivers = TELEMETRY_DF['Driver'].dropna().unique()
-    
+
+    # Get all drivers data for this time
+    all_drivers_data = {}
     for driver in unique_drivers:
-        # Create a temporary DataFrame for the current driver
         driver_df = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].dropna(subset=['SessionTime'])
         if not driver_df.empty:
-            # Find the index of the row with the minimum time difference for this specific driver
             closest_idx = (driver_df['SessionTime'] - session_time).abs().idxmin()
-            # Get the data for that row, replace NaNs, and convert to a dictionary
             driver_row = driver_df.loc[closest_idx].replace({np.nan: None}).to_dict()
+            all_drivers_data[driver] = driver_row
             result_list.append(driver_row)
+
+    # Calculate gap to driver ahead for each driver
+    for driver_data in result_list:
+        current_pos = driver_data.get('Position')
+        if current_pos and current_pos > 1:
+            # Find driver in position ahead
+            for ahead_driver, ahead_data in all_drivers_data.items():
+                if ahead_data.get('Position') == current_pos - 1:
+                    driver_data['DriverAhead'] = ahead_driver
+                    # Calculate distance using X,Y coordinates
+                    if (driver_data.get('X') and driver_data.get('Y') and
+                        ahead_data.get('X') and ahead_data.get('Y')):
+                        gap = ((driver_data['X'] - ahead_data['X'])**2 +
+                               (driver_data['Y'] - ahead_data['Y'])**2)**0.5
+                        driver_data['GapToAhead'] = gap
+                    break
 
     return jsonify({"time": session_time, "drivers": result_list})
 
@@ -106,6 +132,23 @@ def get_track_outline():
                  for _, row in sampled.iterrows()]
 
     return jsonify({"driver": driver, "positions": positions})
+
+@app.route('/api/driver_info', methods=['GET'])
+def get_driver_info():
+    """
+    Returns driver and team info for a specific driver.
+    """
+    if DRIVER_INFO_DF is None or DRIVER_INFO_DF.empty:
+        return jsonify({"error": "Driver info not loaded."}), 500
+
+    driver = request.args.get('driver', 'VER')
+    driver_data = DRIVER_INFO_DF[DRIVER_INFO_DF['Driver'] == driver]
+
+    if driver_data.empty:
+        return jsonify({"error": f"Driver {driver} not found."}), 404
+
+    result = driver_data.iloc[0].replace({np.nan: None}).to_dict()
+    return jsonify(result)
 
 @app.route('/api/weather_by_time', methods=['GET'])
 def get_weather_by_time():
