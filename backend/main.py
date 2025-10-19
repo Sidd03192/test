@@ -84,6 +84,29 @@ def get_race_state_by_time():
 
     return jsonify({"time": session_time, "drivers": result_list})
 
+@app.route('/api/track_outline', methods=['GET'])
+def get_track_outline():
+    """
+    Returns all X,Y positions for a driver to draw track outline.
+    """
+    if TELEMETRY_DF is None or TELEMETRY_DF.empty:
+        return jsonify({"error": "Telemetry data not loaded."}), 500
+
+    driver = request.args.get('driver', 'VER')
+
+    # Get all positions for this driver, ordered by time
+    driver_data = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].copy()
+    driver_data = driver_data.dropna(subset=['X', 'Y', 'SessionTime'])
+    driver_data = driver_data.sort_values('SessionTime')
+
+    # Sample every 3rd point for better accuracy while keeping data size manageable
+    sampled = driver_data.iloc[::3]
+
+    positions = [{"x": float(row['X']), "y": float(row['Y'])}
+                 for _, row in sampled.iterrows()]
+
+    return jsonify({"driver": driver, "positions": positions})
+
 @app.route('/api/weather_by_time', methods=['GET'])
 def get_weather_by_time():
     """

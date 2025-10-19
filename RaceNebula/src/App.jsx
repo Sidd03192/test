@@ -62,12 +62,15 @@ const App = () => {
     TyreLife: 0,
     X: 0,
     Y: 0,
+    DriverAhead: null,
+    GapToAhead: null,
   });
 
   const [drivers, setDrivers] = useState([]);
   const [positionHistory, setPositionHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [trackOutline, setTrackOutline] = useState([]);
 
   // Scenario planner state
   const [tireCompound, setTireCompound] = useState(1);
@@ -166,6 +169,8 @@ const App = () => {
           TyreLife: focusedDriver.TyreLife || 0,
           X: focusedDriver.X || 0,
           Y: focusedDriver.Y || 0,
+          DriverAhead: focusedDriver.DriverAhead || null,
+          GapToAhead: focusedDriver.GapToAhead || null,
         });
 
         // Track position history
@@ -222,12 +227,27 @@ const App = () => {
     }
   }, [sessionTime]);
 
-  // Fetch when driver changes
+  // Fetch track outline when driver changes
   useEffect(() => {
     if (selectedDriver) {
+      fetchTrackOutline(selectedDriver);
       fetchRaceData(sessionTime);
     }
   }, [selectedDriver]);
+
+  const fetchTrackOutline = async (driver) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/track_outline?driver=${driver}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setTrackOutline(data.positions || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch track outline:", err);
+    }
+  };
 
   const tireCompounds = ["SOFT", "MEDIUM", "HARD"];
 
@@ -254,28 +274,71 @@ const App = () => {
     }
   };
 
-  // Normalize X,Y coordinates to percentage for rendering
-  const normalizeCoordinates = (drivers) => {
-    if (drivers.length === 0) return [];
+  // Normalize X,Y coordinates using unified bounds for track and drivers
+  const normalizeWithUnifiedBounds = (drivers, trackOutline) => {
+    const allXValues = [];
+    const allYValues = [];
 
-    const xValues = drivers.map((d) => d.x).filter((x) => x !== 0);
-    const yValues = drivers.map((d) => d.y).filter((y) => y !== 0);
+    // Collect all X,Y values from track outline (prioritize if available)
+    if (trackOutline && trackOutline.length > 0) {
+      trackOutline.forEach((p) => {
+        if (p.x && !isNaN(p.x)) allXValues.push(p.x);
+        if (p.y && !isNaN(p.y)) allYValues.push(p.y);
+      });
+    }
 
-    if (xValues.length === 0 || yValues.length === 0) return drivers;
+    // Also collect from drivers
+    if (drivers && drivers.length > 0) {
+      drivers.forEach((d) => {
+        if (d.x && !isNaN(d.x) && d.x !== 0) allXValues.push(d.x);
+        if (d.y && !isNaN(d.y) && d.y !== 0) allYValues.push(d.y);
+      });
+    }
 
-    const minX = Math.min(...xValues);
-    const maxX = Math.max(...xValues);
-    const minY = Math.min(...yValues);
-    const maxY = Math.max(...yValues);
+    if (allXValues.length === 0 || allYValues.length === 0) {
+      return {
+        drivers: drivers || [],
+        trackOutline: [],
+        path: "",
+      };
+    }
 
-    return drivers.map((d) => ({
+    const minX = Math.min(...allXValues);
+    const maxX = Math.max(...allXValues);
+    const minY = Math.min(...allYValues);
+    const maxY = Math.max(...allYValues);
+
+    // Normalize drivers
+    const normalizedDrivers = (drivers || []).map((d) => ({
       ...d,
       normalizedX: ((d.x - minX) / (maxX - minX)) * 80 + 10,
       normalizedY: ((d.y - minY) / (maxY - minY)) * 80 + 10,
     }));
+
+    // Normalize track outline
+    const normalizedTrack = (trackOutline || []).map((p) => ({
+      x: ((p.x - minX) / (maxX - minX)) * 80 + 10,
+      y: ((p.y - minY) / (maxY - minY)) * 80 + 10,
+    }));
+
+    // Create SVG path
+    const path =
+      normalizedTrack.length > 0
+        ? normalizedTrack
+            .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+            .join(" ") + " Z"
+        : "";
+
+    return {
+      drivers: normalizedDrivers,
+      trackOutline: normalizedTrack,
+      path,
+    };
   };
 
-  const normalizedDrivers = normalizeCoordinates(drivers);
+  const normalized = normalizeWithUnifiedBounds(drivers, trackOutline);
+  const normalizedDrivers = normalized.drivers;
+  const trackOutlinePath = normalized.path;
 
   // Get tire compound color
   const getTireColor = (compound) => {
@@ -472,6 +535,20 @@ const App = () => {
                   >
                     {raceState.driver} | {raceState.team}
                   </Badge>
+                  {/* Gap to driver ahead */}
+                  {telemetry.DriverAhead && telemetry.GapToAhead !== null && (
+                    <div className="flex items-center gap-2 mt-2 bg-secondary/50 rounded-lg px-3 py-2">
+                      <Target className="h-4 w-4 text-accent" />
+                      <div>
+                        <span className="text-xs text-muted-foreground">Gap to </span>
+                        <span className="text-sm font-bold text-accent">{telemetry.DriverAhead}</span>
+                        <span className="text-xs text-muted-foreground"> : </span>
+                        <span className="text-lg font-bold text-primary">
+                          {telemetry.GapToAhead > 0 ? `+${telemetry.GapToAhead.toFixed(1)}m` : `${telemetry.GapToAhead.toFixed(1)}m`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -537,41 +614,6 @@ const App = () => {
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Position Trend */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    Position Trend
-                  </h3>
-                </div>
-                <div className="h-24 bg-secondary/30 rounded-lg p-2 relative overflow-hidden">
-                  <svg
-                    className="w-full h-full"
-                    viewBox="0 0 200 80"
-                    preserveAspectRatio="none"
-                  >
-                    <polyline
-                      points={positionHistory
-                        .map(
-                          (pos, i) =>
-                            `${(i / (positionHistory.length - 1 || 1)) * 200},${
-                              80 - (pos / 20) * 80
-                            }`
-                        )
-                        .join(" ")}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      className="text-primary"
-                    />
-                  </svg>
-                  <div className="absolute top-2 right-2 text-xs text-muted-foreground">
-                    Last 20 updates
                   </div>
                 </div>
               </div>
@@ -737,6 +779,25 @@ const App = () => {
             </CardHeader>
             <CardContent>
               <div className="relative w-full aspect-square bg-gradient-to-br from-secondary/30 to-secondary/10 rounded-xl border-2 border-border overflow-hidden">
+                {/* Track outline SVG */}
+                {trackOutlinePath && (
+                  <svg
+                    className="absolute inset-0 w-full h-full"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="xMidYMid meet"
+                  >
+                    <path
+                      d={trackOutlinePath}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="0.3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-primary/50"
+                    />
+                  </svg>
+                )}
+
                 {/* Track visualization using actual X,Y coordinates */}
                 {normalizedDrivers.map((driver) => (
                   <div

@@ -37,19 +37,30 @@ def process_race_data(year, grand_prix, session):
     for driver in drivers:
         print(f"  Processing driver: {driver}")
         driver_laps = laps.pick_drivers([driver])
-        
+
         telemetry = driver_laps.get_telemetry()
         if telemetry.empty:
             continue
-            
+
+        # Calculate driver ahead and gap distance
+        try:
+            driver_ahead_array, distance_to_ahead_array = telemetry.calculate_driver_ahead()
+            telemetry['DriverAhead'] = driver_ahead_array
+            telemetry['GapToAhead'] = distance_to_ahead_array
+            print(f"    ✓ Calculated driver ahead data for {driver}")
+        except Exception as e:
+            print(f"    ⚠ Could not calculate driver ahead for {driver}: {e}")
+            telemetry['DriverAhead'] = None
+            telemetry['GapToAhead'] = None
+
         telemetry['Driver'] = driver
         telemetry['Team'] = driver_laps.iloc[0]['Team']
-        
+
         lap_context_data = driver_laps[[
-            'LapNumber', 'Stint', 'Compound', 'TyreLife', 
+            'LapNumber', 'Stint', 'Compound', 'TyreLife',
             'Position', 'TrackStatus', 'LapStartTime'
         ]].rename(columns={'LapStartTime': 'SessionTime'})
-        
+
         telemetry = pd.merge_asof(
             telemetry.sort_values('SessionTime'),
             lap_context_data.sort_values('SessionTime'),
@@ -93,7 +104,7 @@ def process_race_data(year, grand_prix, session):
     final_columns = [
         'Date', 'SessionTime', 'Driver', 'Team', 'LapNumber', 'Position', 'Stint',
         'Compound', 'TyreLife', 'Speed', 'RPM', 'nGear', 'Throttle', 'Brake',
-        'DRS', 'X', 'Y', 'Z', 'TrackStatus'
+        'DRS', 'X', 'Y', 'Z', 'TrackStatus', 'DriverAhead', 'GapToAhead'
     ]
     
     existing_columns = [col for col in final_columns if col in full_telemetry_df.columns]
