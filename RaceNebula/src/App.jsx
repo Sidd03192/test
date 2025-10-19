@@ -142,6 +142,13 @@ const App = () => {
   const [fuelLoad, setFuelLoad] = useState([65]);
   const [prediction, setPrediction] = useState(null);
 
+  // Digital Twin Ghost Car state
+  const [ghostCar, setGhostCar] = useState(null);
+  const [showGhost, setShowGhost] = useState(false);
+  const [simulationActive, setSimulationActive] = useState(false);
+  const [pitLap, setPitLap] = useState([30]);
+  const [engineMode, setEngineMode] = useState(1); // 0=ECO, 1=NORMAL, 2=POWER
+
   // Fetch race data from backend
   const fetchRaceData = async (time) => {
     try {
@@ -369,6 +376,50 @@ const App = () => {
       setPrediction(data.scenario?.notes || "Prediction calculated");
     } catch {
       setPrediction("Unable to calculate prediction");
+    }
+  };
+
+  const handleRunSimulation = async () => {
+    setSimulationActive(true);
+    setPrediction(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/run_simulation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          driver: selectedDriver,
+          current_lap: raceState.lap,
+          pit_lap: pitLap[0],
+          pit_compound: tireCompounds[tireCompound],
+          tire_pressure: tirePressure[0],
+          fuel_load: fuelLoad[0],
+          engine_mode: engineMode,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.error) {
+        setPrediction(`Simulation error: ${data.error}`);
+        setGhostCar(null);
+      } else {
+        setGhostCar(data.simulated_laps);
+        setShowGhost(true);
+
+        // Set prediction summary
+        const finalLap = data.simulated_laps[data.simulated_laps.length - 1];
+        const positionChange = finalLap.position - raceState.position;
+        setPrediction(
+          `Digital Twin completed! Final position: P${finalLap.position} (${
+            positionChange > 0 ? "+" : ""
+          }${positionChange}). Total time: ${(finalLap.cumulative_time / 60).toFixed(2)} min.`
+        );
+      }
+      setSimulationActive(false);
+    } catch (err) {
+      console.error("Simulation failed:", err);
+      setPrediction("Unable to run simulation. Check console for details.");
+      setSimulationActive(false);
     }
   };
 
@@ -989,6 +1040,43 @@ const App = () => {
                   </div>
                 ))}
 
+                {/* Ghost Car Visualization */}
+                {showGhost && ghostCar && (() => {
+                  const currentLap = raceState.lap;
+                  const ghostLapData = ghostCar.find(l => l.lap === currentLap);
+
+                  if (!ghostLapData) return null;
+
+                  // Find actual driver position for reference
+                  const actualDriver = normalizedDrivers.find(d => d.name === selectedDriver);
+                  if (!actualDriver) return null;
+
+                  // Offset ghost car slightly for visibility
+                  return (
+                    <div
+                      className="absolute transition-all duration-500"
+                      style={{
+                        left: `${actualDriver.normalizedX + 3}%`,
+                        top: `${actualDriver.normalizedY + 3}%`,
+                        transform: "translate(-50%, -50%)",
+                      }}
+                    >
+                      <div className="relative z-20">
+                        <div className="w-10 h-10 rounded-full border-3 border-dashed border-purple-500 bg-purple-500/30 flex items-center justify-center text-sm font-bold shadow-lg">
+                          {ghostLapData.position}
+                        </div>
+                        <div className="absolute inset-0 bg-purple-500 rounded-full animate-ping opacity-10"></div>
+                        {/* Ghost tooltip */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 bg-purple-900/90 border-2 border-purple-500 rounded-lg text-xs whitespace-nowrap shadow-xl">
+                          <div className="font-bold text-purple-300">GHOST CAR</div>
+                          <div className="text-purple-200">P{ghostLapData.position}</div>
+                          <div className="text-purple-400 text-[10px]">{ghostLapData.compound} ({ghostLapData.tyre_life} laps)</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Legend */}
                 <div className="absolute top-4 right-4 bg-card/90 backdrop-blur border border-border rounded-lg p-3 space-y-1">
                   <div className="text-xs font-semibold text-muted-foreground mb-2">
@@ -1010,23 +1098,47 @@ const App = () => {
                     <div className="w-6 h-6 rounded-full bg-accent border-2 border-accent ring-2 ring-accent/50"></div>
                     <span className="text-xs font-bold">Selected</span>
                   </div>
+                  {showGhost && (
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full border-2 border-dashed border-purple-500 bg-purple-500/30"></div>
+                      <span className="text-xs font-bold text-purple-400">Ghost</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Scenario Planner */}
+          {/* Digital Twin Simulator */}
           <Card className="lg:col-span-4 border-border bg-card/95 backdrop-blur shadow-xl">
             <CardHeader>
               <CardTitle className="text-xl flex items-center gap-2">
-                <Zap className="h-5 w-5 text-accent" />
-                Strategy Simulator
+                <Zap className="h-5 w-5 text-purple-500" />
+                Digital Twin Simulator
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-4">
               <div className="space-y-3">
                 <label className="text-sm font-semibold text-muted-foreground">
-                  Tire Compound
+                  Pit Stop Lap
+                </label>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-muted-foreground">Lap {pitLap[0]}</span>
+                  <span className="text-xs text-muted-foreground">Current: {raceState.lap}</span>
+                </div>
+                <Slider
+                  value={pitLap}
+                  onValueChange={setPitLap}
+                  min={Math.max(raceState.lap + 1, 1)}
+                  max={52}
+                  step={1}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-sm font-semibold text-muted-foreground">
+                  Tire Compound for Pit
                 </label>
                 <div className="flex gap-2">
                   {tireCompounds.map((compound, idx) => (
@@ -1034,14 +1146,32 @@ const App = () => {
                       key={compound}
                       variant={tireCompound === idx ? "default" : "outline"}
                       onClick={() => setTireCompound(idx)}
-                      className="flex-1 font-bold"
+                      className="flex-1 font-bold text-xs"
                     >
                       <div
-                        className={`w-3 h-3 rounded-full mr-2 ${getTireColor(
+                        className={`w-3 h-3 rounded-full mr-1 ${getTireColor(
                           compound
                         )}`}
                       ></div>
                       {compound}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label className="text-sm font-semibold text-muted-foreground">
+                  Engine Mode
+                </label>
+                <div className="flex gap-2">
+                  {["ECO", "NORMAL", "POWER"].map((mode, idx) => (
+                    <Button
+                      key={mode}
+                      variant={engineMode === idx ? "default" : "outline"}
+                      onClick={() => setEngineMode(idx)}
+                      className="flex-1 font-bold text-xs"
+                    >
+                      {mode}
                     </Button>
                   ))}
                 </div>
@@ -1086,12 +1216,22 @@ const App = () => {
               </div>
 
               <Button
-                onClick={handlePredictScenario}
-                className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-lg"
+                onClick={handleRunSimulation}
+                disabled={simulationActive}
+                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 shadow-lg disabled:opacity-50"
                 size="lg"
               >
-                <Zap className="h-5 w-5 mr-2" />
-                Run Prediction
+                {simulationActive ? (
+                  <>
+                    <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full mr-2" />
+                    Simulating...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-5 w-5 mr-2" />
+                    Run Digital Twin
+                  </>
+                )}
               </Button>
 
               {prediction && (

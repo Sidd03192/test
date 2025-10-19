@@ -5,7 +5,8 @@
       "Bash(npx shadcn@latest add:*)",
       "Bash(npm run dev)",
       "Bash(python main.py)",
-      "Bash(python start-race.py:*)"
+      "Bash(python start-race.py:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

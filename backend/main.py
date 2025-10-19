@@ -183,6 +183,159 @@ def predict_scenario():
     total_time_impact = (tire_gain * 15) + pit_time_impact
     return jsonify({"scenario": {"predicted_time_gain": total_time_impact, "notes": f"Pitting on lap {modifications.get('pit_lap')} for {modifications.get('next_compound')}s is predicted to be {abs(total_time_impact):.2f}s {'faster' if total_time_impact < 0 else 'slower'}."}})
 
+# --- DIGITAL TWIN SIMULATION ---
+
+# Tire performance model
+TIRE_DELTAS = {
+    "SOFT": {"base": -1.2, "degradation": 0.08},
+    "MEDIUM": {"base": 0.0, "degradation": 0.05},
+    "HARD": {"base": 0.8, "degradation": 0.03}
+}
+
+def get_driver_lap_times(driver):
+    """Extract lap times and metadata for a driver"""
+    driver_data = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].copy()
+    lap_times = {}
+
+    for lap in sorted(driver_data['LapNumber'].unique()):
+        if lap == 0:
+            continue
+        lap_data = driver_data[driver_data['LapNumber'] == lap]
+        if not lap_data.empty:
+            start_time = lap_data['SessionTime'].min()
+            end_time = lap_data['SessionTime'].max()
+            lap_times[int(lap)] = {
+                "LapTime": float(end_time - start_time) if end_time > start_time else 90.0,
+                "Compound": str(lap_data.iloc[0]['Compound']) if not pd.isna(lap_data.iloc[0]['Compound']) else "MEDIUM",
+                "TyreLife": int(lap_data.iloc[0]['TyreLife']) if not pd.isna(lap_data.iloc[0]['TyreLife']) else 1,
+                "Position": int(lap_data.iloc[0]['Position']) if not pd.isna(lap_data.iloc[0]['Position']) else 10
+            }
+
+    return lap_times
+
+def calculate_tire_delta(compound, life):
+    """Calculate lap time delta based on tire compound and age"""
+    if compound not in TIRE_DELTAS:
+        compound = "MEDIUM"
+    delta = TIRE_DELTAS[compound]["base"]
+    degradation = TIRE_DELTAS[compound]["degradation"] * life
+    return delta + degradation
+
+def calculate_brake_wear_delta(laps_completed):
+    """Brake wear adds time penalty"""
+    return (laps_completed // 10) * 0.02
+
+def calculate_engine_mode_delta(mode):
+    """Engine mode: 0=ECO, 1=NORMAL, 2=POWER"""
+    return [-0.05, 0.0, -0.25][mode]
+
+def calculate_pressure_delta(pressure):
+    """Tire pressure delta from optimal 23 PSI"""
+    optimal = 23
+    return abs(pressure - optimal) * 0.03
+
+def calculate_fuel_delta(fuel_load, current_lap, start_lap):
+    """Lighter car = faster"""
+    laps_completed = current_lap - start_lap
+    remaining_fuel = max(0, fuel_load - (laps_completed * 1.5))
+    return (remaining_fuel - 50) * 0.01
+
+def calculate_position_at_lap(lap, cumulative_time):
+    """Calculate position based on cumulative time vs other drivers"""
+    lap_data = TELEMETRY_DF[TELEMETRY_DF['LapNumber'] == lap].copy()
+
+    if lap_data.empty:
+        return 10
+
+    # Get session time for each driver at this lap
+    driver_times = {}
+    for driver in lap_data['Driver'].dropna().unique():
+        driver_lap_data = lap_data[lap_data['Driver'] == driver]
+        if not driver_lap_data.empty:
+            driver_times[driver] = driver_lap_data['SessionTime'].min()
+
+    # Count how many drivers are ahead
+    position = 1
+    for driver, time in driver_times.items():
+        if time < cumulative_time:
+            position += 1
+
+    return min(position, 20)
+
+@app.route('/api/run_simulation', methods=['POST'])
+def run_simulation():
+    """Run a lap-by-lap Digital Twin simulation"""
+    if TELEMETRY_DF is None or TELEMETRY_DF.empty:
+        return jsonify({"error": "Telemetry data not loaded."}), 500
+
+    try:
+        data = request.json
+        driver = data.get('driver', 'VER')
+        start_lap = int(data.get('current_lap', 1))
+        pit_lap = int(data.get('pit_lap', 30))
+        pit_compound = data.get('pit_compound', 'MEDIUM')
+        tire_pressure = float(data.get('tire_pressure', 23))
+        fuel_load = float(data.get('fuel_load', 65))
+        engine_mode = int(data.get('engine_mode', 1))
+
+        # Get historical lap times
+        driver_laps = get_driver_lap_times(driver)
+
+        if not driver_laps or start_lap not in driver_laps:
+            return jsonify({"error": f"No lap data for driver {driver} at lap {start_lap}"}), 400
+
+        # Initialize ghost state
+        ghost_state = {
+            "current_compound": str(driver_laps[start_lap]["Compound"]),
+            "tyre_life": int(driver_laps[start_lap]["TyreLife"]),
+            "cumulative_time": 0.0,
+            "position": int(driver_laps[start_lap]["Position"])
+        }
+
+        simulated_laps = []
+        max_lap = max(driver_laps.keys())
+
+        for lap in range(start_lap, min(max_lap + 1, 53)):
+            if lap not in driver_laps:
+                continue
+
+            base_lap_time = driver_laps[lap]["LapTime"]
+
+            # Calculate deltas
+            tire_delta = calculate_tire_delta(ghost_state["current_compound"], ghost_state["tyre_life"])
+            brake_delta = calculate_brake_wear_delta(lap - start_lap)
+            engine_delta = calculate_engine_mode_delta(engine_mode)
+            pressure_delta = calculate_pressure_delta(tire_pressure)
+            fuel_delta = calculate_fuel_delta(fuel_load, lap, start_lap)
+
+            # Apply pit stop
+            if lap == pit_lap:
+                lap_time = base_lap_time + 22.0
+                ghost_state["current_compound"] = pit_compound
+                ghost_state["tyre_life"] = 0
+            else:
+                lap_time = base_lap_time + tire_delta + brake_delta + engine_delta + pressure_delta + fuel_delta
+
+            ghost_state["cumulative_time"] += lap_time
+            ghost_state["tyre_life"] += 1
+
+            # Calculate position
+            new_position = calculate_position_at_lap(lap, ghost_state["cumulative_time"])
+
+            simulated_laps.append({
+                "lap": int(lap),
+                "lap_time": round(float(lap_time), 3),
+                "cumulative_time": round(float(ghost_state["cumulative_time"]), 3),
+                "position": int(new_position),
+                "compound": str(ghost_state["current_compound"]),
+                "tyre_life": int(ghost_state["tyre_life"])
+            })
+
+        return jsonify({"simulated_laps": simulated_laps})
+
+    except Exception as e:
+        return jsonify({"error": f"Simulation failed: {str(e)}"}), 500
+
 if __name__ == '__main__':
     load_data()
     app.run(host='0.0.0.0', port=5001, debug=True)
