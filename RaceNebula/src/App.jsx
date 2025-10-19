@@ -26,7 +26,14 @@ import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 const API_BASE_URL = "http://localhost:5001/api";
 
 // === DELTA SIMULATION HELPER ===
-const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
+const applyDeltas = (
+  driverData,
+  weather,
+  tirePressure,
+  fuelLoad,
+  compound,
+  performancePenalty = 1.0
+) => {
   if (!driverData) return { telemetry: driverData, weather };
 
   const basePressure = 23;
@@ -41,14 +48,18 @@ const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
   }[compound] || { speed: 0, wear: 0 };
 
   // --- Apply deltas to telemetry values ---
+  // --- Apply deltas to telemetry values ---
   const adjustedTelemetry = {
     ...driverData,
     Speed:
-      (driverData.Speed || 0) +
-      compoundEffect.speed +
-      fuelDiff * 0.4 -
-      Math.abs(pressureDiff) * 1.5,
-    RPM: (driverData.RPM || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 20,
+      ((driverData.Speed || 0) +
+        compoundEffect.speed +
+        fuelDiff * 0.4 -
+        Math.abs(pressureDiff) * 1.5) *
+      performancePenalty, // <-- APPLY PENALTY
+    RPM:
+      ((driverData.RPM || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 20) *
+      performancePenalty, // <-- APPLY PENALTY
     Throttle: Math.max(
       0,
       Math.min(100, (driverData.Throttle || 0) + fuelDiff * 0.3)
@@ -57,8 +68,12 @@ const applyDeltas = (driverData, weather, tirePressure, fuelLoad, compound) => {
       (driverData.TyreLife || 0) +
       compoundEffect.wear -
       Math.abs(pressureDiff) * 1.0,
-    X: (driverData.X || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 0.15,
-    Y: (driverData.Y || 0) + (compoundEffect.speed + fuelDiff * 0.2) * 0.09,
+    X:
+      (driverData.X || 0) +
+      (compoundEffect.speed + fuelDiff * 0.2) * 0.15 * performancePenalty, // <-- APPLY PENALTY
+    Y:
+      (driverData.Y || 0) +
+      (compoundEffect.speed + fuelDiff * 0.2) * 0.09 * performancePenalty, // <-- APPLY PENALTY
   };
 
   // --- Apply deltas to weather values (tiny effects) ---
@@ -85,6 +100,7 @@ const App = () => {
   const [tireWear, setTireWear] = useState(100.0); // Tire wear as a percentage
   const [alerts, setAlerts] = useState([]); // An array to hold active alerts
   const prevSessionTimeRef = useRef(sessionTime); // To calculate time delta
+  const [performancePenalty, setPerformancePenalty] = useState(1.0); // 1.0 = 100% speed
   const [raceState, setRaceState] = useState({
     lap: 0,
     totalLaps: 58,
@@ -201,7 +217,8 @@ const App = () => {
             weather,
             tirePressure[0],
             fuelLoad[0],
-            ["SOFT", "MEDIUM", "HARD"][tireCompound]
+            ["SOFT", "MEDIUM", "HARD"][tireCompound],
+            performancePenalty // <-- Pass the state variable here
           );
 
         setRaceState({
@@ -290,6 +307,9 @@ const App = () => {
 
   // ... after the useEffect that refetches when the driver changes
 
+  // === UPGRADED: USEEFFECT FOR MANAGING ALERTS & PENALTIES ===
+  // ... after the [sessionTime] useEffect
+
   // === CONSOLIDATED HOOK FOR REAL-TIME CALCULATIONS ===
   useEffect(() => {
     const deltaTime = sessionTime - prevSessionTimeRef.current;
@@ -309,7 +329,7 @@ const App = () => {
       // --- 2. Engine Heat Logic ---
       const heatRates = {
         0: -0.8, // ECO: cools down
-        1: 1.2, // NORMAL: cools slightly (Corrected from 1.2)
+        1: 1.2, // NORMAL: cools slightly
         2: 1.5, // POWER: heats up quickly
       };
       const heatRate = heatRates[engineMode] || -0.2;
@@ -318,44 +338,9 @@ const App = () => {
         Math.max(70, Math.min(130, prevHeat + heatChange))
       );
     }
-    // This single hook depends on all relevant variables
   }, [sessionTime, isPlaying, tireCompound, fuelLoad, engineMode]);
 
-  // ... after the tire wear calculation useEffect
-
-  // === NEW: USEEFFECT FOR MANAGING ALERTS ===
-  useEffect(() => {
-    const activeAlerts = [];
-
-    // Check for critical tire wear
-    if (tireWear <= 20) {
-      activeAlerts.push({
-        id: "tire_wear_critical",
-        variant: "destructive",
-        title: "⚠️ Critical Tire Wear!",
-        description: `Tire integrity is at ${tireWear.toFixed(
-          1
-        )}%. Pit immediately to avoid failure!`,
-      });
-    }
-    // Check for a warning
-    else if (tireWear <= 40) {
-      activeAlerts.push({
-        id: "tire_wear_warning",
-        variant: "default", // This variant has a blue border in shadcn/ui
-        title: "Low Tire Wear Warning",
-        description: `Tire life is at ${tireWear.toFixed(
-          1
-        )}%. Consider a pit stop soon.`,
-      });
-    }
-
-    // You could add other alerts here in the future (e.g., low fuel)
-
-    setAlerts(activeAlerts);
-  }, [tireWear]); // This effect runs only when tireWear changes
-  // Fetch track outline and driver info when driver changes
-  // Refetch when driver changes
+  // ... after the tire wear calculation use
 
   // Find your existing "TIRE WEAR CALCULATION" useEffect and add to it
 
@@ -379,7 +364,8 @@ const App = () => {
           weather,
           tirePressure[0],
           fuelLoad[0],
-          ["SOFT", "MEDIUM", "HARD"][tireCompound]
+          ["SOFT", "MEDIUM", "HARD"][tireCompound],
+          performancePenalty // <-- Pass the state variable here
         );
       setTelemetry(adjustedTelemetry);
       setWeather(adjustedWeather);
@@ -820,12 +806,12 @@ const App = () => {
                   {/* Gap to driver ahead */}
                   {telemetry.DriverAhead && telemetry.GapToAhead !== null && (
                     <div className="flex items-center gap-2 mt-2 bg-secondary/50 rounded-lg px-3 py-2">
-                      <Target className="h-4 w-4 text-accent" />
+                      <Target className="h-4 w-4 text-white" />
                       <div>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-xs text-white-foreground">
                           Gap to{" "}
                         </span>
-                        <span className="text-sm font-bold text-accent">
+                        <span className="text-sm font-bold text-white">
                           {telemetry.DriverAhead}
                         </span>
                         <span className="text-xs text-muted-foreground">
@@ -1275,7 +1261,7 @@ const App = () => {
             <CardHeader>
               <CardTitle className="text-xl flex items-center gap-2">
                 <Zap className="h-5 w-5 text-purple-500" />
-                Digital Twin Simulator
+                Ghost Racer
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1394,7 +1380,7 @@ const App = () => {
                 ) : (
                   <>
                     <Zap className="h-5 w-5 mr-2" />
-                    Run Digital Twin
+                    Run Ghost Raceer simulation
                   </>
                 )}
               </Button>
