@@ -5,7 +5,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Cloud, Wind, Droplets, Gauge, Zap, Circle, Fuel, Play, Pause, TrendingUp, Target, Users } from "lucide-react";
+import {
+  Cloud,
+  Wind,
+  Droplets,
+  Gauge,
+  Zap,
+  Circle,
+  Fuel,
+  Play,
+  Pause,
+  TrendingUp,
+  Target,
+  Users,
+} from "lucide-react";
 
 // Backend API configuration
 const API_BASE_URL = "http://localhost:5001/api";
@@ -64,32 +77,48 @@ const App = () => {
 
   // Fetch race data from backend
   const fetchRaceData = async (time) => {
+    console.log("fetching data");
     try {
       setError(null);
       console.log(`Fetching data for time: ${time}`);
-      const response = await fetch(`${API_BASE_URL}/race_state_by_time?time=${time}`);
+      const response = await fetch(
+        `${API_BASE_URL}/race_state_by_time?time=${time}`
+      );
+      console.log("Backend response:", response);
 
       if (!response.ok) {
-        console.error('Backend response not OK:', response.status);
+        console.error("Backend response not OK:", response.status);
         setError(`Backend error: ${response.status}`);
         setIsLoading(false);
         return;
       }
 
       const data = await response.json();
-      console.log('Received data:', data);
+
+      console.log(`=== DATA AT TIME ${time} ===`);
+      console.log("Drivers count:", data.drivers?.length);
+      console.log("Selected driver:", selectedDriver);
+      const selectedData = data.drivers?.find(
+        (d) => d.Driver === selectedDriver
+      );
+      console.log("Selected driver data:", selectedData);
+      console.log("==========================");
 
       if (data.drivers && data.drivers.length > 0) {
         // Filter out invalid drivers (those with NaN or missing Driver field)
-        const validDrivers = data.drivers.filter(d => d.Driver && d.Driver !== 'NaN' && typeof d.Driver === 'string');
-        console.log('Valid drivers:', validDrivers.length);
+        const validDrivers = data.drivers.filter(
+          (d) => d.Driver && d.Driver !== "NaN" && typeof d.Driver === "string"
+        );
+        console.log("Valid drivers:", validDrivers.length);
 
         setAllDriversData(validDrivers);
 
         // Update available drivers list (only once)
         if (availableDrivers.length === 0) {
-          const uniqueDrivers = [...new Set(validDrivers.map(d => d.Driver))].filter(Boolean);
-          console.log('Unique drivers:', uniqueDrivers);
+          const uniqueDrivers = [
+            ...new Set(validDrivers.map((d) => d.Driver)),
+          ].filter(Boolean);
+          console.log("Unique drivers:", uniqueDrivers);
           setAvailableDrivers(uniqueDrivers);
           if (!selectedDriver && uniqueDrivers.length > 0) {
             setSelectedDriver(uniqueDrivers[0]);
@@ -98,7 +127,7 @@ const App = () => {
 
         // Update drivers positions for track map
         const driversWithPositions = validDrivers
-          .filter(d => d.X && d.Y && !isNaN(d.X) && !isNaN(d.Y))
+          .filter((d) => d.X && d.Y && !isNaN(d.X) && !isNaN(d.Y))
           .map((d, idx) => ({
             id: idx,
             name: d.Driver || "UNK",
@@ -112,7 +141,9 @@ const App = () => {
         setDrivers(driversWithPositions);
 
         // Find selected driver's data
-        const focusedDriver = validDrivers.find(d => d.Driver === selectedDriver) || validDrivers[0];
+        const focusedDriver =
+          validDrivers.find((d) => d.Driver === selectedDriver) ||
+          validDrivers[0];
 
         setRaceState({
           lap: focusedDriver.LapNumber || 0,
@@ -138,14 +169,16 @@ const App = () => {
         });
 
         // Track position history
-        setPositionHistory(prev => {
+        setPositionHistory((prev) => {
           const newHistory = [...prev, focusedDriver.Position || 0];
           return newHistory.slice(-20); // Keep last 20 data points
         });
 
         // Fetch weather data
         try {
-          const weatherResponse = await fetch(`${API_BASE_URL}/weather_by_time?time=${time}`);
+          const weatherResponse = await fetch(
+            `${API_BASE_URL}/weather_by_time?time=${time}`
+          );
           const weatherData = await weatherResponse.json();
           setWeather({
             AirTemp: weatherData.AirTemp || 0,
@@ -165,21 +198,31 @@ const App = () => {
     }
   };
 
-  // Playback effect
+  // Playback effect - updates sessionTime every 1 second
   useEffect(() => {
+    let interval;
     if (isPlaying) {
-      const interval = setInterval(() => {
-        setSessionTime((prev) => {
-          const newTime = prev + playbackSpeed;
-          fetchRaceData(newTime);
-          return newTime;
-        });
+      interval = setInterval(() => {
+        setSessionTime((prev) => prev + playbackSpeed);
       }, 1000);
-      return () => clearInterval(interval);
     }
-  }, [isPlaying, playbackSpeed, selectedDriver]);
+    return () => clearInterval(interval);
+  }, [isPlaying, playbackSpeed]);
 
-  // Initial data load & reload when driver changes
+  // Initial load
+  useEffect(() => {
+    setSessionTime(3700);
+    fetchRaceData(3700);
+  }, []);
+
+  // Fetch data when sessionTime changes (but not on initial mount)
+  useEffect(() => {
+    if (selectedDriver && sessionTime !== 0) {
+      fetchRaceData(sessionTime);
+    }
+  }, [sessionTime]);
+
+  // Fetch when driver changes
   useEffect(() => {
     if (selectedDriver) {
       fetchRaceData(sessionTime);
@@ -192,16 +235,16 @@ const App = () => {
     try {
       const compound = tireCompounds[tireCompound];
       const response = await fetch(`${API_BASE_URL}/predict_scenario`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           modifications: {
             next_compound: compound,
             pit_lap: raceState.lap + 5,
             tire_pressure: tirePressure[0],
             fuel_load: fuelLoad[0],
-          }
-        })
+          },
+        }),
       });
       const data = await response.json();
       setPrediction(data.scenario?.notes || "Prediction calculated");
@@ -215,8 +258,8 @@ const App = () => {
   const normalizeCoordinates = (drivers) => {
     if (drivers.length === 0) return [];
 
-    const xValues = drivers.map(d => d.x).filter(x => x !== 0);
-    const yValues = drivers.map(d => d.y).filter(y => y !== 0);
+    const xValues = drivers.map((d) => d.x).filter((x) => x !== 0);
+    const yValues = drivers.map((d) => d.y).filter((y) => y !== 0);
 
     if (xValues.length === 0 || yValues.length === 0) return drivers;
 
@@ -225,7 +268,7 @@ const App = () => {
     const minY = Math.min(...yValues);
     const maxY = Math.max(...yValues);
 
-    return drivers.map(d => ({
+    return drivers.map((d) => ({
       ...d,
       normalizedX: ((d.x - minX) / (maxX - minX)) * 80 + 10,
       normalizedY: ((d.y - minY) / (maxY - minY)) * 80 + 10,
@@ -236,11 +279,15 @@ const App = () => {
 
   // Get tire compound color
   const getTireColor = (compound) => {
-    switch(compound?.toUpperCase()) {
-      case 'SOFT': return 'bg-red-500';
-      case 'MEDIUM': return 'bg-yellow-500';
-      case 'HARD': return 'bg-gray-200';
-      default: return 'bg-gray-400';
+    switch (compound?.toUpperCase()) {
+      case "SOFT":
+        return "bg-red-500";
+      case "MEDIUM":
+        return "bg-yellow-500";
+      case "HARD":
+        return "bg-gray-200";
+      default:
+        return "bg-gray-400";
     }
   };
 
@@ -251,8 +298,12 @@ const App = () => {
         <Card className="border-border bg-card/95 backdrop-blur shadow-xl p-8">
           <div className="text-center space-y-4">
             <div className="animate-spin h-12 w-12 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
-            <h2 className="text-2xl font-bold text-primary">Loading Race Data...</h2>
-            <p className="text-muted-foreground">Connecting to backend at {API_BASE_URL}</p>
+            <h2 className="text-2xl font-bold text-primary">
+              Loading Race Data...
+            </h2>
+            <p className="text-muted-foreground">
+              Connecting to backend at {API_BASE_URL}
+            </p>
           </div>
         </Card>
       </div>
@@ -265,9 +316,17 @@ const App = () => {
         <Card className="border-destructive bg-card/95 backdrop-blur shadow-xl p-8">
           <div className="text-center space-y-4">
             <div className="text-destructive text-6xl">⚠️</div>
-            <h2 className="text-2xl font-bold text-destructive">Connection Error</h2>
+            <h2 className="text-2xl font-bold text-destructive">
+              Connection Error
+            </h2>
             <p className="text-muted-foreground">{error}</p>
-            <Button onClick={() => { setError(null); setIsLoading(true); fetchRaceData(0); }}>
+            <Button
+              onClick={() => {
+                setError(null);
+                setIsLoading(true);
+                fetchRaceData(0);
+              }}
+            >
               Retry Connection
             </Button>
           </div>
@@ -279,7 +338,6 @@ const App = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary/20 p-4 md:p-6">
       <div className="grid grid-cols-1 gap-4 max-w-[2000px] mx-auto">
-
         {/* Header with Driver Selection */}
         <Card className="border-border bg-card/95 backdrop-blur shadow-xl">
           <CardContent className="p-4">
@@ -288,19 +346,25 @@ const App = () => {
                 <h1 className="text-3xl md:text-4xl font-bold tracking-tight bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
                   RACENEBULA F1
                 </h1>
-                <p className="text-sm text-muted-foreground mt-1">Real-time Race Analytics & Strategy Dashboard</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Real-time Race Analytics & Strategy Dashboard
+                </p>
               </div>
 
               <div className="flex items-center gap-4">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground font-semibold">SELECT DRIVER</label>
+                  <label className="text-xs text-muted-foreground font-semibold">
+                    SELECT DRIVER
+                  </label>
                   <select
                     value={selectedDriver}
                     onChange={(e) => setSelectedDriver(e.target.value)}
                     className="bg-secondary text-foreground rounded-lg px-4 py-2 font-bold text-lg border-2 border-primary/50 hover:border-primary transition-all cursor-pointer"
                   >
-                    {availableDrivers.map(driver => (
-                      <option key={driver} value={driver}>{driver}</option>
+                    {availableDrivers.map((driver) => (
+                      <option key={driver} value={driver}>
+                        {driver}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -309,7 +373,9 @@ const App = () => {
                   <Users className="h-5 w-5 text-primary" />
                   <div className="text-sm">
                     <div className="text-muted-foreground">Total Drivers</div>
-                    <div className="font-bold text-lg">{availableDrivers.length}</div>
+                    <div className="font-bold text-lg">
+                      {availableDrivers.length}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -324,9 +390,17 @@ const App = () => {
               <Button
                 onClick={() => setIsPlaying(!isPlaying)}
                 size="lg"
-                className={`${isPlaying ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'} transition-all shadow-lg`}
+                className={`${
+                  isPlaying
+                    ? "bg-destructive hover:bg-destructive/90"
+                    : "bg-primary hover:bg-primary/90"
+                } transition-all shadow-lg`}
               >
-                {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                {isPlaying ? (
+                  <Pause className="h-6 w-6" />
+                ) : (
+                  <Play className="h-6 w-6" />
+                )}
               </Button>
               <div className="flex-1">
                 <Slider
@@ -335,17 +409,18 @@ const App = () => {
                     setSessionTime(val[0]);
                     fetchRaceData(val[0]);
                   }}
-                  min={0}
-                  max={7200}
+                  min={3700}
+                  max={9000}
                   step={1}
                   className="w-full"
                 />
               </div>
               <div className="text-lg font-mono font-bold bg-secondary px-4 py-2 rounded-lg">
-                {Math.floor(sessionTime / 60)}:{String(Math.floor(sessionTime % 60)).padStart(2, '0')}
+                {Math.floor(sessionTime / 60)}:
+                {String(Math.floor(sessionTime % 60)).padStart(2, "0")}
               </div>
               <div className="flex gap-2">
-                {[1, 2, 5, 10].map(speed => (
+                {[1, 2, 5, 10].map((speed) => (
                   <Button
                     key={speed}
                     variant={playbackSpeed === speed ? "default" : "outline"}
@@ -369,7 +444,9 @@ const App = () => {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-2 bg-primary rounded-full animate-pulse"></div>
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Driver Status</h3>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                    Driver Status
+                  </h3>
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center gap-4">
@@ -378,7 +455,9 @@ const App = () => {
                       <span className="text-3xl font-bold text-primary">
                         {raceState.lap}
                       </span>
-                      <span className="text-muted-foreground">/ {raceState.totalLaps}</span>
+                      <span className="text-muted-foreground">
+                        / {raceState.totalLaps}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-muted-foreground text-sm">P</span>
@@ -387,7 +466,10 @@ const App = () => {
                       </span>
                     </div>
                   </div>
-                  <Badge variant="secondary" className="text-base px-4 py-2 font-bold">
+                  <Badge
+                    variant="secondary"
+                    className="text-base px-4 py-2 font-bold"
+                  >
                     {raceState.driver} | {raceState.team}
                   </Badge>
                 </div>
@@ -397,15 +479,21 @@ const App = () => {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Cloud className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Weather</h3>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                    Weather
+                  </h3>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-secondary/50 rounded-lg p-3">
                     <div className="flex items-center gap-2">
                       <Gauge className="h-5 w-5 text-orange-500" />
                       <div>
-                        <div className="text-xs text-muted-foreground">Track</div>
-                        <div className="text-xl font-bold">{weather.TrackTemp?.toFixed(1)}°C</div>
+                        <div className="text-xs text-muted-foreground">
+                          Track
+                        </div>
+                        <div className="text-xl font-bold">
+                          {weather.TrackTemp?.toFixed(1)}°C
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -414,7 +502,9 @@ const App = () => {
                       <Cloud className="h-5 w-5 text-blue-400" />
                       <div>
                         <div className="text-xs text-muted-foreground">Air</div>
-                        <div className="text-xl font-bold">{weather.AirTemp?.toFixed(1)}°C</div>
+                        <div className="text-xl font-bold">
+                          {weather.AirTemp?.toFixed(1)}°C
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -422,17 +512,29 @@ const App = () => {
                     <div className="flex items-center gap-2">
                       <Wind className="h-5 w-5 text-cyan-400" />
                       <div>
-                        <div className="text-xs text-muted-foreground">Wind</div>
-                        <div className="text-lg font-bold">{weather.WindSpeed?.toFixed(1)} km/h</div>
+                        <div className="text-xs text-muted-foreground">
+                          Wind
+                        </div>
+                        <div className="text-lg font-bold">
+                          {weather.WindSpeed?.toFixed(1)} km/h
+                        </div>
                       </div>
                     </div>
                   </div>
                   <div className="bg-secondary/50 rounded-lg p-3">
                     <div className="flex items-center gap-2">
-                      <Droplets className={`h-5 w-5 ${weather.Rainfall ? 'text-blue-500' : 'text-muted'}`} />
+                      <Droplets
+                        className={`h-5 w-5 ${
+                          weather.Rainfall ? "text-blue-500" : "text-muted"
+                        }`}
+                      />
                       <div>
-                        <div className="text-xs text-muted-foreground">Rain</div>
-                        <div className="text-lg font-bold">{weather.Rainfall ? "Yes" : "No"}</div>
+                        <div className="text-xs text-muted-foreground">
+                          Rain
+                        </div>
+                        <div className="text-lg font-bold">
+                          {weather.Rainfall ? "Yes" : "No"}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -443,14 +545,25 @@ const App = () => {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Position Trend</h3>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                    Position Trend
+                  </h3>
                 </div>
                 <div className="h-24 bg-secondary/30 rounded-lg p-2 relative overflow-hidden">
-                  <svg className="w-full h-full" viewBox="0 0 200 80" preserveAspectRatio="none">
+                  <svg
+                    className="w-full h-full"
+                    viewBox="0 0 200 80"
+                    preserveAspectRatio="none"
+                  >
                     <polyline
-                      points={positionHistory.map((pos, i) =>
-                        `${(i / (positionHistory.length - 1 || 1)) * 200},${80 - (pos / 20) * 80}`
-                      ).join(' ')}
+                      points={positionHistory
+                        .map(
+                          (pos, i) =>
+                            `${(i / (positionHistory.length - 1 || 1)) * 200},${
+                              80 - (pos / 20) * 80
+                            }`
+                        )
+                        .join(" ")}
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="2"
@@ -472,12 +585,20 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">RPM</div>
-                <div className="text-3xl font-bold text-primary">{telemetry.RPM?.toLocaleString()}</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  RPM
+                </div>
+                <div className="text-3xl font-bold text-primary">
+                  {telemetry.RPM?.toLocaleString()}
+                </div>
                 <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
-                    className={`h-full transition-all duration-300 ${telemetry.RPM > 13000 ? 'bg-destructive' : 'bg-primary'}`}
-                    style={{ width: `${(telemetry.RPM / telemetry.maxRpm) * 100}%` }}
+                    className={`h-full transition-all duration-300 ${
+                      telemetry.RPM > 13000 ? "bg-destructive" : "bg-primary"
+                    }`}
+                    style={{
+                      width: `${(telemetry.RPM / telemetry.maxRpm) * 100}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -488,7 +609,9 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Speed</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  Speed
+                </div>
                 <div className="text-3xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
                   {telemetry.Speed?.toFixed(0)}
                 </div>
@@ -501,8 +624,12 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Gear</div>
-                <div className="text-5xl font-bold text-primary text-center">{telemetry.nGear}</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  Gear
+                </div>
+                <div className="text-5xl font-bold text-primary text-center">
+                  {telemetry.nGear}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -511,8 +638,12 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Throttle</div>
-                <div className="text-3xl font-bold text-green-500">{telemetry.Throttle?.toFixed(0)}%</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  Throttle
+                </div>
+                <div className="text-3xl font-bold text-green-500">
+                  {telemetry.Throttle?.toFixed(0)}%
+                </div>
                 <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div
                     className="h-full bg-green-500 transition-all duration-300"
@@ -527,10 +658,16 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Brake</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  Brake
+                </div>
                 <div className="flex items-center justify-center h-16">
                   <Circle
-                    className={`h-10 w-10 transition-all ${telemetry.Brake ? 'fill-destructive text-destructive animate-pulse' : 'text-muted'}`}
+                    className={`h-10 w-10 transition-all ${
+                      telemetry.Brake
+                        ? "fill-destructive text-destructive animate-pulse"
+                        : "text-muted"
+                    }`}
                   />
                 </div>
               </div>
@@ -541,11 +678,15 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">DRS</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  DRS
+                </div>
                 <div className="flex items-center justify-center h-16">
                   <Badge
                     variant={telemetry.DRS > 0 ? "default" : "secondary"}
-                    className={`text-xl px-6 py-3 font-bold ${telemetry.DRS > 0 ? 'bg-primary animate-pulse' : ''}`}
+                    className={`text-xl px-6 py-3 font-bold ${
+                      telemetry.DRS > 0 ? "bg-primary animate-pulse" : ""
+                    }`}
                   >
                     {telemetry.DRS > 0 ? "OPEN" : "CLOSED"}
                   </Badge>
@@ -558,14 +699,25 @@ const App = () => {
           <Card className="border-border bg-gradient-to-br from-card to-card/50 backdrop-blur shadow-lg hover:shadow-xl transition-all">
             <CardContent className="p-4">
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Tires</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">
+                  Tires
+                </div>
                 <div className="flex items-center gap-2">
-                  <div className={`h-8 w-8 rounded-full ${getTireColor(telemetry.Compound)}`}></div>
-                  <Badge variant="secondary" className="text-sm px-3 py-1 font-bold">
+                  <div
+                    className={`h-8 w-8 rounded-full ${getTireColor(
+                      telemetry.Compound
+                    )}`}
+                  ></div>
+                  <Badge
+                    variant="secondary"
+                    className="text-sm px-3 py-1 font-bold"
+                  >
                     {telemetry.Compound}
                   </Badge>
                 </div>
-                <div className="text-xs text-muted-foreground">Life: {telemetry.TyreLife?.toFixed(0)} laps</div>
+                <div className="text-xs text-muted-foreground">
+                  Life: {telemetry.TyreLife?.toFixed(0)} laps
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -578,7 +730,9 @@ const App = () => {
               <CardTitle className="text-xl flex items-center gap-2">
                 <Target className="h-5 w-5 text-primary" />
                 Live Track Map
-                <Badge variant="secondary" className="ml-auto">{drivers.length} Drivers</Badge>
+                <Badge variant="secondary" className="ml-auto">
+                  {drivers.length} Drivers
+                </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -616,9 +770,15 @@ const App = () => {
                       )}
                       {/* Tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 bg-card border-2 border-border rounded-lg text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-20 shadow-xl">
-                        <div className="font-bold text-primary">{driver.name}</div>
-                        <div className="text-muted-foreground">{driver.team}</div>
-                        <div className="text-accent font-semibold">{driver.speed?.toFixed(0)} km/h</div>
+                        <div className="font-bold text-primary">
+                          {driver.name}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {driver.team}
+                        </div>
+                        <div className="text-accent font-semibold">
+                          {driver.speed?.toFixed(0)} km/h
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -626,7 +786,9 @@ const App = () => {
 
                 {/* Legend */}
                 <div className="absolute top-4 right-4 bg-card/90 backdrop-blur border border-border rounded-lg p-3 space-y-1">
-                  <div className="text-xs font-semibold text-muted-foreground mb-2">POSITIONS</div>
+                  <div className="text-xs font-semibold text-muted-foreground mb-2">
+                    POSITIONS
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-full bg-yellow-500 border-2 border-yellow-600"></div>
                     <span className="text-xs">P1</span>
@@ -658,7 +820,9 @@ const App = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
-                <label className="text-sm font-semibold text-muted-foreground">Tire Compound</label>
+                <label className="text-sm font-semibold text-muted-foreground">
+                  Tire Compound
+                </label>
                 <div className="flex gap-2">
                   {tireCompounds.map((compound, idx) => (
                     <Button
@@ -667,7 +831,11 @@ const App = () => {
                       onClick={() => setTireCompound(idx)}
                       className="flex-1 font-bold"
                     >
-                      <div className={`w-3 h-3 rounded-full mr-2 ${getTireColor(compound)}`}></div>
+                      <div
+                        className={`w-3 h-3 rounded-full mr-2 ${getTireColor(
+                          compound
+                        )}`}
+                      ></div>
                       {compound}
                     </Button>
                   ))}
@@ -676,8 +844,12 @@ const App = () => {
 
               <div className="space-y-3">
                 <div className="flex justify-between">
-                  <label className="text-sm font-semibold text-muted-foreground">Tire Pressure</label>
-                  <span className="text-sm font-bold text-primary">{tirePressure[0]} PSI</span>
+                  <label className="text-sm font-semibold text-muted-foreground">
+                    Tire Pressure
+                  </label>
+                  <span className="text-sm font-bold text-primary">
+                    {tirePressure[0]} PSI
+                  </span>
                 </div>
                 <Slider
                   value={tirePressure}
@@ -691,8 +863,12 @@ const App = () => {
 
               <div className="space-y-3">
                 <div className="flex justify-between">
-                  <label className="text-sm font-semibold text-muted-foreground">Fuel Load</label>
-                  <span className="text-sm font-bold text-primary">{fuelLoad[0]} kg</span>
+                  <label className="text-sm font-semibold text-muted-foreground">
+                    Fuel Load
+                  </label>
+                  <span className="text-sm font-bold text-primary">
+                    {fuelLoad[0]} kg
+                  </span>
                 </div>
                 <Slider
                   value={fuelLoad}
@@ -719,7 +895,9 @@ const App = () => {
                     <TrendingUp className="h-4 w-4" />
                     Prediction Result
                   </h4>
-                  <p className="text-sm text-foreground leading-relaxed font-medium">{prediction}</p>
+                  <p className="text-sm text-foreground leading-relaxed font-medium">
+                    {prediction}
+                  </p>
                 </div>
               )}
             </CardContent>

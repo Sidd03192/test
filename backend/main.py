@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import pandas as pd
 import os
+import numpy as np # Import numpy to handle NaN values explicitly
 
 # --- INITIALIZATION ---
 app = Flask(__name__)
@@ -65,11 +66,23 @@ def get_race_state_by_time():
     except ValueError:
         return jsonify({"error": "Invalid 'time' parameter. Must be a number."}), 400
 
-    # Find the closest data point in time for all drivers
-    time_data = TELEMETRY_DF.iloc[(TELEMETRY_DF['SessionTime'] - session_time).abs().argsort()[:20]]
+    # --- NEW, CORRECTED LOGIC ---
+    # Find the closest data point for EACH driver independently to create a true snapshot.
+    result_list = []
+    # Get a list of unique drivers present in the dataset
+    unique_drivers = TELEMETRY_DF['Driver'].dropna().unique()
     
-    result = time_data.to_dict(orient='records')
-    return jsonify({"time": session_time, "drivers": result})
+    for driver in unique_drivers:
+        # Create a temporary DataFrame for the current driver
+        driver_df = TELEMETRY_DF[TELEMETRY_DF['Driver'] == driver].dropna(subset=['SessionTime'])
+        if not driver_df.empty:
+            # Find the index of the row with the minimum time difference for this specific driver
+            closest_idx = (driver_df['SessionTime'] - session_time).abs().idxmin()
+            # Get the data for that row, replace NaNs, and convert to a dictionary
+            driver_row = driver_df.loc[closest_idx].replace({np.nan: None}).to_dict()
+            result_list.append(driver_row)
+
+    return jsonify({"time": session_time, "drivers": result_list})
 
 @app.route('/api/weather_by_time', methods=['GET'])
 def get_weather_by_time():
@@ -87,7 +100,9 @@ def get_weather_by_time():
     # Find the closest weather data point in time
     weather_point = WEATHER_DF.iloc[(WEATHER_DF['SessionTime'] - session_time).abs().argsort()[0]]
     
-    result = weather_point.to_dict()
+    # --- MORE ROBUST FIX: Explicitly replace np.nan with None ---
+    cleaned_data = weather_point.replace({np.nan: None})
+    result = cleaned_data.to_dict()
     return jsonify(result)
 
 # This is a simplified prediction model for the hackathon
