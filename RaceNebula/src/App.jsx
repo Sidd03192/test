@@ -1261,7 +1261,7 @@ const App = () => {
             <CardHeader>
               <CardTitle className="text-xl flex items-center gap-2">
                 <Zap className="h-5 w-5 text-purple-500" />
-                Ghost Racer
+                Ghost Racer 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
